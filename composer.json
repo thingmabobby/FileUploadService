@@ -1,0 +1,69 @@
+{
+    "name": "thingmabobby/file-upload-service",
+    "description": "A comprehensive PHP file upload service supporting base64 data URIs, traditional file uploads, HEIC/HEIF conversion, and multiple file types",
+    "type": "library",
+    "license": "Unlicense",
+    "keywords": [
+        "file-upload",
+        "base64",
+        "heic",
+        "jpeg",
+        "pdf",
+        "cad",
+        "images",
+        "documents",
+        "php",
+        "upload",
+        "file-management"
+    ],
+    "authors": [
+        {
+            "name": "Thingmabobby",
+            "email": "thingmabobby@gmail.com",
+            "homepage": "https://github.com/thingmabobby"
+        }
+    ],
+    "homepage": "https://github.com/thingmabobby/file-upload-service",
+    "support": {
+        "issues": "https://github.com/thingmabobby/file-upload-service/issues",
+        "source": "https://github.com/thingmabobby/file-upload-service"
+    },
+    "funding": [
+        {
+            "type": "github",
+            "url": "https://github.com/sponsors/thingmabobby"
+        }
+    ],
+    "require": {
+        "php": "^8.1",
+        "maestroerror/php-heic-to-jpg": "^1.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.0",
+        "phpunit/php-code-coverage": "^10.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "FileUploadService\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "FileUploadService\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit",
+        "test-coverage": "phpunit --coverage-html coverage",
+        "test-coverage-text": "phpunit --coverage-text",
+        "test-verbose": "phpunit --verbose",
+        "test-stop-on-failure": "phpunit --stop-on-failure"
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "*": true
+        }
+    },
+    "prefer-stable": true
+}

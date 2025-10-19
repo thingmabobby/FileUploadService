@@ -1,0 +1,57 @@
+# Composer
+/vendor/
+composer.lock
+
+# PHPUnit
+.phpunit.cache/
+.phpunit.result.cache
+coverage/
+.phpunit.cache.*
+phpunit.xml.bak
+test-results/
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Runtime directories
+uploads/
+test_uploads/
+temp/
+tmp/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Build artifacts
+build/
+dist/
+
+# Node modules (if using any frontend tools)
+node_modules/
+
+# Cache directories
+cache/
+.cache/
+
+# Test artifacts
+test-results/
+test-output/
