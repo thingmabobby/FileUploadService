@@ -28,28 +28,80 @@ composer require thingmabobby/file-upload-service
 
 ```php
 use FileUploadService\FileUploadService;
-use FileUploadService\FilesystemSaver;
-use FileUploadService\Enum\FileTypeEnum;
 
-// Create service with default filesystem storage
-$fileUploadService = new FileUploadService([
-    FileTypeEnum::IMAGE->value,
-    FileTypeEnum::PDF->value
-]);
+// Define allowed file types
+$allowedFileTypes = ['image', 'pdf'];
 
-// Upload files
-$result = $fileUploadService->save($input, $uploadDir, $filenames);
+// Define input data (can be $_FILES array or base64 data URIs)
+$input = $_FILES['files']; // or ['data:image/jpeg;base64,/9j/4AAQ...', 'data:application/pdf;base64,JVBERi0x...']
 
-// Check results
-if ($result->hasSuccessfulUploads()) {
-    echo "Uploaded " . $result->successfulCount . " files";
-    foreach ($result->successfulFiles as $filePath) {
-        echo "Saved: " . $filePath . "\n";
+// Define upload directory (relative path)
+$uploadDir = 'uploads';
+
+// Define filenames for each input
+$filenames = ['photo1.jpg', 'document1.pdf'];
+
+// Create service with simple string-based configuration
+$fileUploadService = new FileUploadService($allowedFileTypes);
+
+try {
+    // Upload files
+    $result = $fileUploadService->save($input, $uploadDir, $filenames);
+
+    // Check results
+    if ($result->hasSuccessfulUploads()) {
+        echo "Uploaded " . $result->successfulCount . " files";
+        foreach ($result->successfulFiles as $filePath) {
+            echo "Saved: " . $filePath . "\n";
+        }
+    } else {
+        foreach ($result->getErrorMessages() as $errorMessage) {
+            echo "Error: " . $errorMessage . "\n";
+        }
     }
-} else {
-    foreach ($result->getErrorMessages() as $errorMessage) {
-        echo "Error: " . $errorMessage . "\n";
+} catch (RuntimeException $e) {
+    // Handle critical errors (directory creation, filename mismatches, etc.)
+    echo "Critical error: " . $e->getMessage() . "\n";
+}
+```
+
+## Exception Handling
+
+The `FileUploadService` uses a **two-tier exception handling strategy**:
+
+### **Critical Errors (Thrown Exceptions)**
+These errors prevent the entire operation from proceeding and should be caught with try-catch:
+
+- **Directory Issues**: Upload directory doesn't exist and can't be created
+- **Permission Issues**: Upload directory is not writable  
+- **Parameter Mismatches**: Filename count doesn't match input count
+- **Configuration Errors**: Invalid file types provided
+
+### **Individual File Errors (Captured in Result)**
+These errors affect individual files but allow the operation to continue:
+
+- **File Validation Failures**: Invalid file types, corrupted data
+- **Upload Errors**: PHP upload errors (file too large, partial upload, etc.)
+- **Processing Errors**: HEIC conversion failures, file saving issues
+
+### **Best Practice**
+Always wrap the `save()` method in a try-catch block to handle critical errors, then check the result for individual file errors:
+
+```php
+try {
+    $result = $fileUploadService->save($input, $uploadDir, $filenames);
+    
+    // Handle individual file results
+    if ($result->hasSuccessfulUploads()) {
+        // Process successful uploads
     }
+    
+    if ($result->hasErrors()) {
+        // Handle individual file errors
+    }
+} catch (RuntimeException $e) {
+    // Handle critical system errors
+    error_log("File upload failed: " . $e->getMessage());
 }
 ```
 
@@ -82,9 +134,8 @@ $service = new FileUploadService([
     FileTypeEnum::PDF
 ]);
 
-// Get all available file types
+// Get all available file types - returns array of FileTypeEnum cases
 $allFileTypes = FileUploadService::getAvailableFileTypeCategories();
-// Returns array of FileTypeEnum cases
 ```
 
 ### HEIC/HEIF Conversion
@@ -138,8 +189,6 @@ $service = new FileUploadService(
 );
 
 // Advanced usage with enums (optional)
-use FileUploadService\Enum\CollisionStrategyEnum;
-
 $service = new FileUploadService(
     allowedFileTypes: ['image'],
     collisionStrategy: CollisionStrategyEnum::UUID
@@ -186,12 +235,12 @@ if ($service->isRollbackOnErrorEnabled()) {
 
 ```php
 use FileUploadService\FileUploadService;
-use FileUploadService\FilesystemSaver;
 
 // Default filesystem storage (uses system temp directory)
 $service = new FileUploadService(['image']);
 
 // Custom filesystem storage with specific directory
+use FileUploadService\FilesystemSaver;
 $filesystemSaver = new FilesystemSaver('/var/uploads', 0755, true);
 $service = new FileUploadService(
     allowedFileTypes: ['image'],
@@ -252,22 +301,80 @@ $result = $fileUploadService->save($input, $uploadDir, $filenames);
 
 ## Supported File Types
 
+The service supports a comprehensive range of file types through the `SupportedFileTypesEnum`. Here are all supported file types organized by category:
+
 ### Images
-- JPEG, PNG, GIF, WebP, AVIF, JXL, BMP, TIFF, HEIC, HEIF
+| Extension | MIME Type | Description |
+|-----------|-----------|-------------|
+| `jpg` | `image/jpeg` | JPEG images |
+| `png` | `image/png` | PNG images |
+| `gif` | `image/gif` | GIF images |
+| `webp` | `image/webp` | WebP images |
+| `avif` | `image/avif` | AVIF images |
+| `jxl` | `image/jxl` | JPEG XL images |
+| `bmp` | `image/bmp` | BMP images |
+| `tiff` | `image/tiff` | TIFF images |
+| `heic` | `image/heic` | HEIC images (converted to JPEG) |
+| `heif` | `image/heif` | HEIF images (converted to JPEG) |
+
+### PDF Documents
+| Extension | MIME Type | Description |
+|-----------|-----------|-------------|
+| `pdf` | `application/pdf` | Standard PDF documents |
+| `pdf` | `application/x-pdf` | Alternative PDF MIME type |
+| `pdf` | `application/acrobat` | Adobe Acrobat PDF |
+| `pdf` | `application/vnd.pdf` | Vendor-specific PDF |
 
 ### Documents
-- PDF (multiple MIME types supported)
-- Microsoft Office: DOC, DOCX, XLS, XLSX, PPT, PPTX
-- OpenDocument: ODT, ODS, ODP
-- Text: TXT, RTF, CSV, XML, JSON
+| Extension | MIME Type | Description |
+|-----------|-----------|-------------|
+| `doc` | `application/msword` | Microsoft Word documents |
+| `docx` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | Microsoft Word XML documents |
+| `xls` | `application/vnd.ms-excel` | Microsoft Excel spreadsheets |
+| `xlsx` | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` | Microsoft Excel XML spreadsheets |
+| `ppt` | `application/vnd.ms-powerpoint` | Microsoft PowerPoint presentations |
+| `pptx` | `application/vnd.openxmlformats-officedocument.presentationml.presentation` | Microsoft PowerPoint XML presentations |
+| `txt` | `text/plain` | Plain text files |
+| `rtf` | `application/rtf` | Rich Text Format documents |
+| `csv` | `text/csv` | Comma-separated values |
+| `xml` | `application/xml` | XML documents |
+| `json` | `application/json` | JSON documents |
+| `odt` | `application/vnd.oasis.opendocument.text` | OpenDocument text |
+| `ods` | `application/vnd.oasis.opendocument.spreadsheet` | OpenDocument spreadsheet |
+| `odp` | `application/vnd.oasis.opendocument.presentation` | OpenDocument presentation |
 
 ### CAD Files
-- AutoCAD: DWG, DXF
-- SolidWorks: SLDPRT, SLDASM
-- Other: STEP, IGES, STL
+| Extension | MIME Type | Description |
+|-----------|-----------|-------------|
+| `dwg` | `application/dwg` | AutoCAD drawings |
+| `dxf` | `application/dxf` | AutoCAD DXF files |
+| `step` | `application/step` | STEP 3D models |
+| `iges` | `application/iges` | IGES 3D models |
+| `stl` | `application/stl` | STL 3D models |
+| `sldprt` | `application/sldprt` | SolidWorks part files |
+| `sldasm` | `application/sldasm` | SolidWorks assembly files |
 
 ### Archives
-- ZIP, RAR, 7Z, TAR, GZ
+| Extension | MIME Type | Description |
+|-----------|-----------|-------------|
+| `zip` | `application/zip` | ZIP archives |
+| `rar` | `application/x-rar-compressed` | RAR archives |
+| `7z` | `application/x-7z-compressed` | 7-Zip archives |
+| `tar` | `application/x-tar` | TAR archives |
+| `gz` | `application/gzip` | GZIP compressed files |
+
+### File Type Categories
+
+The service organizes file types into the following categories (accessible via `FileTypeEnum`):
+
+- **`image`** - All image formats (JPEG, PNG, GIF, WebP, AVIF, JXL, BMP, TIFF, HEIC, HEIF)
+- **`pdf`** - PDF documents (all MIME variants)
+- **`doc`** - All document formats (Office, OpenDocument, text files)
+- **`cad`** - CAD and technical drawing files
+- **`archive`** - Compressed archive formats
+- **`all`** - Allow all file types (no restrictions)
+
+**Note:** For programmatic access to this information, use the `SupportedFileTypesEnum` class which provides methods to get extensions, MIME types, and categories for each supported file type.
 
 ## API Reference
 
@@ -276,14 +383,14 @@ $result = $fileUploadService->save($input, $uploadDir, $filenames);
 #### Constructor
 ```php
 public function __construct(
-    array $allowedFileTypes = [FileTypeEnum::IMAGE, FileTypeEnum::PDF, FileTypeEnum::CAD],
+    private array $allowedFileTypes = [FileTypeEnum::IMAGE, FileTypeEnum::PDF, FileTypeEnum::CAD],
     ?FileSaverInterface $fileSaver = null,
-    bool $createDirectory = true,
-    int $directoryPermissions = 0775,
-    bool $rollbackOnError = false,
+    private readonly bool $createDirectory = true,
+    private readonly int $directoryPermissions = 0775,
+    private readonly bool $rollbackOnError = false,
     string|callable|CollisionStrategyEnum $collisionStrategy = CollisionStrategyEnum::INCREMENT,
-    bool $highPerformanceMode = false,
-    bool $convertHeicToJpg = true
+    private readonly bool $highPerformanceMode = false,
+    private readonly bool $convertHeicToJpg = true
 )
 ```
 
@@ -309,6 +416,7 @@ public function __construct(
 - `getFileTypeCategoryFromExtension(string $extension): FileTypeEnum|string`
 - `getRestrictionDescription(): string`
 - `cleanFilename(string $filename, bool $removeUnderscores = false): string`
+- `isFileTypeAllowedByExtension(string $extension): bool`
 
 #### Static Methods
 - `getAvailableFileTypeCategories(): array`
@@ -331,9 +439,9 @@ public function __construct(
 ### FileUploadError
 
 **Properties:**
-- `public readonly string $filename`
-- `public readonly string $message`
-- `public readonly string $code`
+- `public readonly string $filename` - The filename that caused the error
+- `public readonly string $message` - The error message
+- `public readonly string $code` - The error code (optional, defaults to empty string)
 
 **Methods:**
 - `getDescription(): string`
@@ -374,8 +482,11 @@ The package includes comprehensive test coverage with PHPUnit:
 # Run all tests
 composer test
 
-# Run tests with coverage
+# Run tests with HTML coverage report
 composer test-coverage
+
+# Run tests with text coverage report
+composer test-coverage-text
 
 # Run tests with verbose output
 composer test-verbose
