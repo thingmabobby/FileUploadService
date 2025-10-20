@@ -95,9 +95,29 @@ class SecurityTest extends TestCase
             $resolvedPath = $method->invoke($this->fileSaver, $validPath);
 
             // Verify the resolved path is within the base directory
-            $normalizedTestDir = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $this->testDir);
-            $normalizedResolvedPath = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $resolvedPath);
+            // On Windows, normalize both paths using realpath to handle short/long name variations
+            $canonicalTestDir = realpath($this->testDir);
+            $this->assertNotFalse($canonicalTestDir, "Test directory should exist");
+
+            // For the resolved path directory, get its canonical form
+            $resolvedDir = dirname($resolvedPath);
+            if (is_dir($resolvedDir)) {
+                $canonicalResolvedDir = realpath($resolvedDir);
+                $canonicalResolvedPath = $canonicalResolvedDir . DIRECTORY_SEPARATOR . basename($resolvedPath);
+            } else {
+                $canonicalResolvedPath = $resolvedPath;
+            }
+
+            // Normalize directory separators and case for comparison
+            $normalizedTestDir = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $canonicalTestDir);
+            $normalizedResolvedPath = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $canonicalResolvedPath);
             $normalizedValidPath = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $validPath);
+
+            // On Windows, use case-insensitive comparison
+            if (DIRECTORY_SEPARATOR === '\\') {
+                $normalizedTestDir = strtolower($normalizedTestDir);
+                $normalizedResolvedPath = strtolower($normalizedResolvedPath);
+            }
 
             $this->assertStringStartsWith($normalizedTestDir, $normalizedResolvedPath);
             $this->assertStringEndsWith($normalizedValidPath, $normalizedResolvedPath);

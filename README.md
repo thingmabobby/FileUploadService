@@ -15,6 +15,7 @@ A comprehensive PHP service for handling file uploads from base64 encoded data U
 - **Pluggable Storage**: Extensible storage backends via FileSaverInterface (filesystem, cloud, custom)
 - **Type Safety**: Full enum-based type system for file types and strategies
 - **Separate DTOs**: Specialized data transfer objects for different input types
+- **Cross-Platform**: Full Windows, Linux, and macOS compatibility with proper path handling
 
 ## Requirements
 
