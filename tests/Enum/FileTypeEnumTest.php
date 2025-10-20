@@ -16,6 +16,7 @@ class FileTypeEnumTest extends TestCase
         $this->assertSame('cad', FileTypeEnum::CAD->value);
         $this->assertSame('doc', FileTypeEnum::DOC->value);
         $this->assertSame('archive', FileTypeEnum::ARCHIVE->value);
+        $this->assertSame('video', FileTypeEnum::VIDEO->value);
         $this->assertSame('all', FileTypeEnum::ALL->value);
     }
 
@@ -27,6 +28,7 @@ class FileTypeEnumTest extends TestCase
         $this->assertSame('CAD Files', FileTypeEnum::CAD->getLabel());
         $this->assertSame('Documents', FileTypeEnum::DOC->getLabel());
         $this->assertSame('Archives', FileTypeEnum::ARCHIVE->getLabel());
+        $this->assertSame('Videos', FileTypeEnum::VIDEO->getLabel());
         $this->assertSame('All Files', FileTypeEnum::ALL->getLabel());
     }
 
@@ -36,12 +38,13 @@ class FileTypeEnumTest extends TestCase
         $values = FileTypeEnum::getAllValues();
 
         $this->assertIsArray($values);
-        $this->assertCount(6, $values);
+        $this->assertCount(7, $values);
         $this->assertContains('image', $values);
         $this->assertContains('pdf', $values);
         $this->assertContains('cad', $values);
         $this->assertContains('doc', $values);
         $this->assertContains('archive', $values);
+        $this->assertContains('video', $values);
         $this->assertContains('all', $values);
     }
 
@@ -51,7 +54,7 @@ class FileTypeEnumTest extends TestCase
         $cases = FileTypeEnum::cases();
 
         $this->assertIsArray($cases);
-        $this->assertCount(6, $cases);
+        $this->assertCount(7, $cases);
 
         foreach ($cases as $case) {
             $this->assertInstanceOf(FileTypeEnum::class, $case);

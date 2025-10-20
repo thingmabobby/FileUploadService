@@ -53,6 +53,8 @@ class FileUploadResult
 
     /**
      * Get all error messages as an array
+     * 
+     * @return array<string> Array of error messages
      */
     public function getErrorMessages(): array
     {

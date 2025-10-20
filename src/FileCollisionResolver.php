@@ -7,6 +7,7 @@ namespace FileUploadService;
 use FileUploadService\FileServiceValidator;
 use FileUploadService\Enum\CollisionStrategyEnum;
 use FileUploadService\Enum\FileTypeEnum;
+use FileUploadService\Utils\FilenameSanitizer;
 
 /**
  * Service for resolving filename collisions in file uploads
@@ -23,26 +24,28 @@ class FileCollisionResolver
      * @param string|callable $collisionStrategy Strategy for resolving filename collisions
      */
     public function __construct(
-        private FileServiceValidator $validator,
-        private mixed $collisionStrategy = CollisionStrategyEnum::INCREMENT->value
+        private readonly FileServiceValidator $validator,
+        private readonly mixed $collisionStrategy = CollisionStrategyEnum::INCREMENT->value
     ) {}
 
 
     /**
      * Generate unique filenames for a list of base filenames
      *
-     * @param string $uploadDir The upload directory
+     * @param string $uploadDestination The upload destination
      * @param array<string> $baseFilenames Array of base filenames
      * @param array<string> $usedFilenames Array of already used filenames in this batch
      * @return array<string> Array of unique filenames
      */
-    public function generateUniqueFilenames(string $uploadDir, array $baseFilenames, array $usedFilenames = []): array
+    public function generateUniqueFilenames(string $uploadDestination, array $baseFilenames, array $usedFilenames = []): array
     {
         $uniqueFilenames = [];
         $currentUsedFilenames = $usedFilenames;
 
         foreach ($baseFilenames as $baseFilename) {
-            $uniqueFilename = $this->generateUniqueFilename($uploadDir, $baseFilename, $currentUsedFilenames);
+            // Clean filename to remove null bytes and dangerous characters
+            $cleanFilename = FilenameSanitizer::cleanFilename($baseFilename);
+            $uniqueFilename = $this->generateUniqueFilename($uploadDestination, $cleanFilename, $currentUsedFilenames);
             $uniqueFilenames[] = $uniqueFilename;
             $currentUsedFilenames[] = $uniqueFilename;
         }
@@ -54,12 +57,12 @@ class FileCollisionResolver
     /**
      * Generate a unique filename for a single base filename
      *
-     * @param string $uploadDir The upload directory
+     * @param string $uploadDestination The upload destination
      * @param string $baseFilename The base filename
      * @param array<string> $usedFilenames Array of already used filenames in this batch
      * @return string The unique filename
      */
-    public function generateUniqueFilename(string $uploadDir, string $baseFilename, array $usedFilenames = []): string
+    public function generateUniqueFilename(string $uploadDestination, string $baseFilename, array $usedFilenames = []): string
     {
         // Check if this is a complete filename with extension
         $pathInfo = pathinfo($baseFilename);
@@ -67,7 +70,7 @@ class FileCollisionResolver
 
         if ($hasExtension) {
             // For complete filenames, check if the file exists directly
-            $testFilePath = rtrim($uploadDir, '/') . '/' . $baseFilename;
+            $testFilePath = rtrim($uploadDestination, '/') . '/' . $baseFilename;
             $hasConflict = file_exists($testFilePath);
         } else {
             // For base filenames, check against all possible extensions
@@ -76,7 +79,7 @@ class FileCollisionResolver
 
             foreach ($possibleExtensions as $ext) {
                 $testFilename = $baseFilename . '.' . $ext;
-                $testFilePath = rtrim($uploadDir, '/') . '/' . $testFilename;
+                $testFilePath = rtrim($uploadDestination, '/') . '/' . $testFilename;
 
                 if (file_exists($testFilePath)) {
                     $hasConflict = true;
@@ -97,13 +100,13 @@ class FileCollisionResolver
 
         if ($hasExtension) {
             // For complete filenames, generate unique name with proper extension handling
-            $actualBaseFilename = $pathInfo['filename'] ?? $baseFilename;
-            $extension = $pathInfo['extension'] ?? '';
+            $actualBaseFilename = $pathInfo['filename'];
+            $extension = $pathInfo['extension'];
 
             $possibleExtensions = $this->getAllPossibleExtensions();
             $uniqueBaseFilename = $this->resolveCollision(
                 baseFilename: $actualBaseFilename,
-                uploadDir: $uploadDir,
+                uploadDestination: $uploadDestination,
                 possibleExtensions: $possibleExtensions,
                 usedFilenames: $usedFilenames
             );
@@ -114,7 +117,7 @@ class FileCollisionResolver
             $possibleExtensions = $this->getAllPossibleExtensions();
             return $this->resolveCollision(
                 baseFilename: $baseFilename,
-                uploadDir: $uploadDir,
+                uploadDestination: $uploadDestination,
                 possibleExtensions: $possibleExtensions,
                 usedFilenames: $usedFilenames
             );
@@ -126,14 +129,14 @@ class FileCollisionResolver
      * Resolve filename collision using the configured strategy
      *
      * @param string $baseFilename The base filename
-     * @param string $uploadDir The upload directory
+     * @param string $uploadDestination The upload destination
      * @param array<string> $possibleExtensions Array of possible file extensions
      * @param array<string> $usedFilenames Array of already used filenames in this batch
      * @return string Unique filename
      */
     private function resolveCollision(
         string $baseFilename,
-        string $uploadDir,
+        string $uploadDestination,
         array $possibleExtensions,
         array $usedFilenames
     ): string {
@@ -142,7 +145,7 @@ class FileCollisionResolver
             return $this->resolveWithCustomStrategy(
                 $this->collisionStrategy,
                 $baseFilename,
-                $uploadDir,
+                $uploadDestination,
                 $possibleExtensions,
                 $usedFilenames
             );
@@ -150,10 +153,10 @@ class FileCollisionResolver
 
         // Use built-in strategy
         return match ($this->collisionStrategy) {
-            CollisionStrategyEnum::UUID->value      => $this->resolveWithUuid($baseFilename, $uploadDir, $possibleExtensions, $usedFilenames),
-            CollisionStrategyEnum::TIMESTAMP->value => $this->resolveWithTimestamp($baseFilename, $uploadDir, $possibleExtensions, $usedFilenames),
-            CollisionStrategyEnum::INCREMENT->value => $this->resolveWithIncrement($baseFilename, $uploadDir, $possibleExtensions, $usedFilenames),
-            default => $this->resolveWithIncrement($baseFilename, $uploadDir, $possibleExtensions, $usedFilenames),
+            CollisionStrategyEnum::UUID->value      => $this->resolveWithUuid($baseFilename, $uploadDestination, $possibleExtensions, $usedFilenames),
+            CollisionStrategyEnum::TIMESTAMP->value => $this->resolveWithTimestamp($baseFilename, $uploadDestination, $possibleExtensions, $usedFilenames),
+            CollisionStrategyEnum::INCREMENT->value => $this->resolveWithIncrement($baseFilename, $uploadDestination, $possibleExtensions, $usedFilenames),
+            default => $this->resolveWithIncrement($baseFilename, $uploadDestination, $possibleExtensions, $usedFilenames),
         };
     }
 
@@ -162,14 +165,14 @@ class FileCollisionResolver
      * Resolve filename collision using increment strategy (filename_1, filename_2, etc.)
      *
      * @param string $baseFilename The base filename
-     * @param string $uploadDir The upload directory
+     * @param string $uploadDestination The upload destination
      * @param array<string> $possibleExtensions Array of possible file extensions
      * @param array<string> $usedFilenames Array of already used filenames in this batch
      * @return string Unique filename
      */
     public function resolveWithIncrement(
         string $baseFilename,
-        string $uploadDir,
+        string $uploadDestination,
         array $possibleExtensions,
         array $usedFilenames
     ): string {
@@ -184,7 +187,7 @@ class FileCollisionResolver
             }
 
             // Check if unique
-            if ($this->isFilenameUnique($candidateFilename, $uploadDir, $possibleExtensions, $usedFilenames)) {
+            if ($this->isFilenameUnique($candidateFilename, $uploadDestination, $possibleExtensions, $usedFilenames)) {
                 return $candidateFilename;
             }
 
@@ -197,14 +200,14 @@ class FileCollisionResolver
      * Resolve collision using UUID strategy
      *
      * @param string $baseFilename The base filename
-     * @param string $uploadDir The upload directory
+     * @param string $uploadDestination The upload destination
      * @param array<string> $possibleExtensions Array of possible file extensions
      * @param array<string> $usedFilenames Array of already used filenames in this batch
      * @return string Unique filename
      */
     public function resolveWithUuid(
         string $baseFilename,
-        string $uploadDir,
+        string $uploadDestination,
         array $possibleExtensions,
         array $usedFilenames
     ): string {
@@ -214,7 +217,7 @@ class FileCollisionResolver
             $uuid = $this->generateShortUuid();
             $candidateFilename = $baseFilename . '_' . $uuid;
 
-            if ($this->isFilenameUnique($candidateFilename, $uploadDir, $possibleExtensions, $usedFilenames)) {
+            if ($this->isFilenameUnique($candidateFilename, $uploadDestination, $possibleExtensions, $usedFilenames)) {
                 return $candidateFilename;
             }
         }
@@ -228,14 +231,14 @@ class FileCollisionResolver
      * Resolve collision using timestamp strategy
      *
      * @param string $baseFilename The base filename
-     * @param string $uploadDir The upload directory
+     * @param string $uploadDestination The upload destination
      * @param array<string> $possibleExtensions Array of possible file extensions
      * @param array<string> $usedFilenames Array of already used filenames in this batch
      * @return string Unique filename
      */
     public function resolveWithTimestamp(
         string $baseFilename,
-        string $uploadDir,
+        string $uploadDestination,
         array $possibleExtensions,
         array $usedFilenames
     ): string {
@@ -246,7 +249,7 @@ class FileCollisionResolver
             $microseconds = (int)(microtime(true) * 10000) % 10000;
             $candidateFilename = $baseFilename . '_' . $timestamp . ($attempt > 0 ? '_' . $microseconds : '');
 
-            if ($this->isFilenameUnique($candidateFilename, $uploadDir, $possibleExtensions, $usedFilenames)) {
+            if ($this->isFilenameUnique($candidateFilename, $uploadDestination, $possibleExtensions, $usedFilenames)) {
                 return $candidateFilename;
             }
 
@@ -263,7 +266,7 @@ class FileCollisionResolver
      *
      * @param callable $strategy Custom collision resolution function
      * @param string $baseFilename The base filename
-     * @param string $uploadDir The upload directory
+     * @param string $uploadDestination The upload destination
      * @param array<string> $possibleExtensions Array of possible file extensions
      * @param array<string> $usedFilenames Array of already used filenames in this batch
      * @return string Unique filename
@@ -271,17 +274,18 @@ class FileCollisionResolver
     public function resolveWithCustomStrategy(
         callable $strategy,
         string $baseFilename,
-        string $uploadDir,
+        string $uploadDestination,
         array $possibleExtensions,
         array $usedFilenames
     ): string {
-        return call_user_func(
+        $result = call_user_func(
             $strategy,
             $baseFilename,
-            $uploadDir,
+            $uploadDestination,
             $possibleExtensions,
             $usedFilenames
         );
+        return is_string($result) ? $result : $baseFilename;
     }
 
 
@@ -291,14 +295,14 @@ class FileCollisionResolver
      * Performance Note: This method performs filesystem checks.
      *
      * @param string $candidateFilename The filename to check
-     * @param string $uploadDir The upload directory
+     * @param string $uploadDestination The upload destination
      * @param array<string> $possibleExtensions Array of possible file extensions
      * @param array<string> $usedFilenames Array of already used filenames in this batch
      * @return bool True if unique, false otherwise
      */
     public function isFilenameUnique(
         string $candidateFilename,
-        string $uploadDir,
+        string $uploadDestination,
         array $possibleExtensions,
         array $usedFilenames
     ): bool {
@@ -310,10 +314,10 @@ class FileCollisionResolver
         // Filesystem checks: iterate through possible extensions
         // Note: We check all extensions to prevent collisions across file types
         // (e.g., prevent photo.jpg when photo.png exists)
-        $uploadDirPath = rtrim($uploadDir, '/') . '/';
+        $uploadDestinationPath = rtrim($uploadDestination, '/') . '/';
 
         foreach ($possibleExtensions as $ext) {
-            if (file_exists($uploadDirPath . $candidateFilename . '.' . $ext)) {
+            if (file_exists($uploadDestinationPath . $candidateFilename . '.' . $ext)) {
                 return false; // Early return on first collision
             }
         }
@@ -393,6 +397,7 @@ class FileCollisionResolver
     {
         return match ($category) {
             FileTypeEnum::IMAGE->value   => array_values($this->validator->getSupportedImageTypes()),
+            FileTypeEnum::VIDEO->value   => array_values($this->validator->getSupportedVideoTypes()),
             FileTypeEnum::PDF->value     => array_values($this->validator->getSupportedPdfTypes()),
             FileTypeEnum::CAD->value     => array_values($this->validator->getSupportedCadTypes()),
             FileTypeEnum::DOC->value     => array_values($this->validator->getSupportedDocumentTypes()),

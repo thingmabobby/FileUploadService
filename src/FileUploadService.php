@@ -9,9 +9,11 @@ use FileUploadService\FileUploadError;
 use FileUploadService\FileServiceValidator;
 use FileUploadService\FileCollisionResolver;
 use FileUploadService\FileUploadSave;
-use FileUploadService\DTO\FileDTO;
+use FileUploadService\DTO\FileUploadDTO;
+use FileUploadService\DTO\DataUriDTO;
 use FileUploadService\Enum\FileTypeEnum;
 use FileUploadService\Enum\CollisionStrategyEnum;
+use FileUploadService\Utils\FilenameSanitizer;
 use RuntimeException;
 
 /**
@@ -25,18 +27,45 @@ class FileUploadService
 {
     /**
      * Array of successfully saved file paths (for rollback tracking)
+     * 
+     * @var array<string>
      */
     private array $savedFiles = [];
 
     /**
      * Array of successfully saved file paths (for result tracking)
+     * 
+     * @var array<string>
      */
     private array $savedFilePaths = [];
 
     /**
      * Array of upload errors (for result tracking)
+     * 
+     * @var array<FileUploadError>
      */
     private array $errors = [];
+
+    /**
+     * Allowed file type categories (image, pdf, etc.)
+     * 
+     * @var array<FileTypeEnum>
+     */
+    private array $allowedCategories = [];
+
+    /**
+     * Allowed file extensions (custom extensions)
+     * 
+     * @var array<string>
+     */
+    private array $allowedExtensions = [];
+
+    /**
+     * Allowed MIME types (custom MIME types)
+     * 
+     * @var array<string>
+     */
+    private array $allowedMimeTypes = [];
 
     /**
      * File validator instance
@@ -55,6 +84,14 @@ class FileUploadService
 
 
     /**
+     * Collision strategy for handling filename conflicts (can be string, callable, or enum)
+     * 
+     * @var string|callable|CollisionStrategyEnum
+     */
+    private mixed $collisionStrategy;
+
+
+    /**
      * Constructor 
      *
      * @param array<string|FileTypeEnum> $allowedFileTypes Array of allowed file type strings ('image', 'pdf', etc.) or enum cases, or specific file extensions
@@ -69,7 +106,7 @@ class FileUploadService
      */
     public function __construct(
         private array $allowedFileTypes = [FileTypeEnum::IMAGE, FileTypeEnum::PDF, FileTypeEnum::CAD],
-        ?FileSaverInterface $fileSaver = null,
+        private readonly ?FileSaverInterface $fileSaver = null,
         private readonly bool $createDirectory = true,
         private readonly int $directoryPermissions = 0775,
         private readonly bool $rollbackOnError = false,
@@ -77,18 +114,19 @@ class FileUploadService
         private readonly bool $highPerformanceMode = false,
         private readonly bool $convertHeicToJpg = true
     ) {
+        $this->collisionStrategy = $collisionStrategy;
         $this->validator = new FileServiceValidator();
         $this->setAllowedFileTypes($this->allowedFileTypes);
 
         // High-performance mode: override collision strategy to UUID for fewer filesystem calls
-        $finalCollisionStrategy = $this->highPerformanceMode && !is_callable($collisionStrategy)
+        $finalCollisionStrategy = $this->highPerformanceMode && !is_callable($this->collisionStrategy)
             ? CollisionStrategyEnum::UUID->value
-            : $this->deriveCollisionStrategyValue($collisionStrategy);
+            : $this->deriveCollisionStrategyValue($this->collisionStrategy);
 
         $this->collisionResolver = new FileCollisionResolver($this->validator, $finalCollisionStrategy);
 
         // Create default filesystem saver if none provided
-        $fileSaver = $fileSaver ?? new FilesystemSaver(sys_get_temp_dir(), $this->directoryPermissions, $this->createDirectory);
+        $fileSaver = $this->fileSaver ?? new FilesystemSaver(sys_get_temp_dir(), $this->directoryPermissions, $this->createDirectory);
         $this->fileUploadSave = new FileUploadSave($this->validator, $fileSaver, $this->convertHeicToJpg);
     }
 
@@ -96,7 +134,7 @@ class FileUploadService
     /**
      * Set the allowed file types
      *
-     * @param array<string|FileTypeEnum> $allowedFileTypes Array of allowed file type enums and/or specific file extensions
+     * @param array<string|FileTypeEnum> $allowedFileTypes Array of allowed file type enums, specific file extensions, or MIME types (prefixed with 'mime:')
      * @throws RuntimeException If invalid file type enums are provided
      */
     public function setAllowedFileTypes(array $allowedFileTypes): void
@@ -107,11 +145,23 @@ class FileUploadService
         }
 
         $validatedTypes = [];
+        $this->allowedCategories = [];
+        $this->allowedExtensions = [];
+        $this->allowedMimeTypes = [];
 
         foreach ($allowedFileTypes as $type) {
             // Handle enum cases
             if ($type instanceof FileTypeEnum) {
                 $validatedTypes[] = $type->value;
+                $this->allowedCategories[] = $type;
+                continue;
+            }
+
+            // Handle MIME types (prefixed with 'mime:')
+            if (str_starts_with($type, 'mime:')) {
+                $mimeType = substr($type, 5); // Remove 'mime:' prefix
+                $validatedTypes[] = $type;
+                $this->allowedMimeTypes[] = $mimeType;
                 continue;
             }
 
@@ -119,9 +169,11 @@ class FileUploadService
             $derivedEnum = FileTypeEnum::tryFrom($type);
             if ($derivedEnum) {
                 $validatedTypes[] = $derivedEnum->value;
+                $this->allowedCategories[] = $derivedEnum;
             } else {
                 // Keep as string for custom extensions
                 $validatedTypes[] = $type;
+                $this->allowedExtensions[] = $type;
             }
         }
 
@@ -132,11 +184,117 @@ class FileUploadService
     /**
      * Get the current allowed file types
      *
-     * @return array<string> Array of allowed file type categories
+     * @return array<FileTypeEnum|string> Array of allowed file type categories
      */
     public function getAllowedFileTypes(): array
     {
         return $this->allowedFileTypes;
+    }
+
+
+    /**
+     * Set allowed file type categories
+     *
+     * @param array<string|FileTypeEnum> $categories Array of file type categories (image, pdf, etc.)
+     */
+    public function setAllowedCategories(array $categories): void
+    {
+        $this->allowedCategories = [];
+        foreach ($categories as $category) {
+            if ($category instanceof FileTypeEnum) {
+                $this->allowedCategories[] = $category;
+            } else {
+                // Convert string to enum if possible
+                $enum = FileTypeEnum::tryFrom($category);
+                if ($enum) {
+                    $this->allowedCategories[] = $enum;
+                }
+            }
+        }
+        $this->updateAllowedFileTypes();
+    }
+
+
+    /**
+     * Set allowed file extensions
+     *
+     * @param array<string> $extensions Array of file extensions (without dots)
+     */
+    public function setAllowedExtensions(array $extensions): void
+    {
+        $this->allowedExtensions = array_map('strtolower', $extensions);
+        $this->updateAllowedFileTypes();
+    }
+
+
+    /**
+     * Set allowed MIME types
+     *
+     * @param array<string> $mimeTypes Array of MIME types
+     */
+    public function setAllowedMimeTypes(array $mimeTypes): void
+    {
+        $this->allowedMimeTypes = $mimeTypes;
+        $this->updateAllowedFileTypes();
+    }
+
+
+    /**
+     * Get allowed categories
+     *
+     * @return array<FileTypeEnum> Array of allowed categories
+     */
+    public function getAllowedCategories(): array
+    {
+        return $this->allowedCategories;
+    }
+
+
+    /**
+     * Get allowed extensions
+     *
+     * @return array<string> Array of allowed extensions
+     */
+    public function getAllowedExtensions(): array
+    {
+        return $this->allowedExtensions;
+    }
+
+
+    /**
+     * Get allowed MIME types
+     *
+     * @return array<string> Array of allowed MIME types
+     */
+    public function getAllowedMimeTypes(): array
+    {
+        return $this->allowedMimeTypes;
+    }
+
+
+    /**
+     * Update the combined allowedFileTypes array from individual arrays
+     */
+    private function updateAllowedFileTypes(): void
+    {
+        $combined = [];
+
+        // Add categories
+        foreach ($this->allowedCategories as $category) {
+            $combined[] = $category;
+        }
+
+        // Add extensions
+        foreach ($this->allowedExtensions as $extension) {
+            $combined[] = $extension;
+        }
+
+        // Add MIME types with prefix
+        foreach ($this->allowedMimeTypes as $mimeType) {
+            $combined[] = 'mime:' . $mimeType;
+        }
+
+        $this->allowedFileTypes = $combined;
     }
 
 
@@ -179,7 +337,8 @@ class FileUploadService
         $categoryExtensions = $this->getExtensionsForCategory($fileType);
         foreach ($categoryExtensions as $ext) {
             foreach ($this->allowedFileTypes as $allowedType) {
-                if (strtolower($allowedType) === strtolower($ext)) {
+                $allowedTypeStr = $allowedType instanceof FileTypeEnum ? $allowedType->value : $allowedType;
+                if (strtolower($allowedTypeStr) === strtolower($ext)) {
                     return true;
                 }
             }
@@ -199,19 +358,35 @@ class FileUploadService
     {
         // Normalize to array
         $fileTypes = is_array($fileTypes) ? $fileTypes : [$fileTypes];
-        $validTypes = self::getAvailableFileTypeCategories();
+        $validTypes = array_map(fn($enum) => $enum->value, self::getAvailableFileTypeCategories());
 
         foreach ($fileTypes as $fileType) {
             // Check if it's a valid constant
             if (in_array($fileType, $validTypes, true)) {
                 if (!in_array($fileType, $this->allowedFileTypes, true)) {
                     $this->allowedFileTypes[] = $fileType;
+
+                    // Convert string to enum
+                    $enum = FileTypeEnum::from($fileType);
+                    $this->allowedCategories[] = $enum;
                 }
                 continue;
             }
 
+            // Handle MIME types (prefixed with 'mime:')
+            if (str_starts_with($fileType, 'mime:')) {
+                $mimeType = substr($fileType, 5); // Remove 'mime:' prefix
+                if (!in_array($fileType, $this->allowedFileTypes, true)) {
+                    $this->allowedFileTypes[] = $fileType;
+                    $this->allowedMimeTypes[] = $mimeType;
+                }
+                continue;
+            }
+
+            // For custom extensions, add as-is
             if (!in_array($fileType, $this->allowedFileTypes, true)) {
                 $this->allowedFileTypes[] = $fileType;
+                $this->allowedExtensions[] = $fileType;
             }
         }
     }
@@ -228,6 +403,7 @@ class FileUploadService
         $fileTypes = is_array($fileTypes) ? $fileTypes : [$fileTypes];
 
         foreach ($fileTypes as $fileType) {
+            // Remove the file type from allowedFileTypes array
             $key = array_search($fileType, $this->allowedFileTypes, true);
             if ($key !== false) {
                 unset($this->allowedFileTypes[$key]);
@@ -272,30 +448,30 @@ class FileUploadService
      * 
      * All inputs are automatically converted to individual file arrays for consistent processing.
      *
-     * @param array $input Array of data URIs, $_FILES arrays, or mixed input types
-     * @param string $uploadDir The directory to save files to
+     * @param array<string|array<string, mixed>> $input Array of data URIs, $_FILES arrays, or mixed input types
+     * @param string $uploadDestination The destination to save files to (directory, bucket/key prefix, etc.)
      * @param array<string> $filenames Array of filenames corresponding to each input
      * @param bool $overwriteExisting Whether to overwrite existing files (default: false)
      * @return FileUploadResult Detailed result with successful uploads and errors
-     * @throws RuntimeException If upload directory cannot be created or is not writable
+     * @throws RuntimeException If upload destination cannot be created or is not writable
      */
     public function save(
         array $input,
-        string $uploadDir,
+        string $uploadDestination,
         array $filenames,
         bool $overwriteExisting = false,
         bool $generateUniqueFilenames = false
     ): FileUploadResult {
         // Process all inputs using the unified method
         // This handles the complexity of different $_FILES structures internally
-        return $this->saveFromInput($input, $uploadDir, $filenames, $overwriteExisting, $generateUniqueFilenames);
+        return $this->saveFromInput($input, $uploadDestination, $filenames, $overwriteExisting, $generateUniqueFilenames);
     }
 
 
     /**
      * Check if input is a traditional file upload array ($_FILES)
      */
-    private function isFileUploadArray($input): bool
+    private function isFileUploadArray(mixed $input): bool
     {
         if (!is_array($input)) {
             return false;
@@ -309,7 +485,7 @@ class FileUploadService
     /**
      * Check if input is a multi-file upload array ($_FILES['files'])
      */
-    private function isMultiFileUploadArray($input): bool
+    private function isMultiFileUploadArray(mixed $input): bool
     {
         if (!is_array($input)) {
             return false;
@@ -325,7 +501,7 @@ class FileUploadService
     /**
      * Check if input is a single file upload array ($_FILES['file'])
      */
-    private function isSingleFileUploadArray($input): bool
+    private function isSingleFileUploadArray(mixed $input): bool
     {
         if (!is_array($input)) {
             return false;
@@ -345,6 +521,9 @@ class FileUploadService
      * 
      * Input: $_FILES['files'] with arrays for name, tmp_name, etc.
      * Output: Array of individual file arrays, each with the same structure as a single file upload
+     * 
+     * @param array<string, array<string|int, mixed>> $multiFileArray Multi-file array from $_FILES
+     * @return array<int, array<string, mixed>> Array of individual file arrays
      */
     private function convertMultiFileToIndividualFiles(array $multiFileArray): array
     {
@@ -391,6 +570,9 @@ class FileUploadService
      * 
      * Input: $_FILES['files'] with strings for name, tmp_name, etc.
      * Output: Individual file array with the same structure as files from multi-upload
+     * 
+     * @param array<string, mixed> $singleFileArray Single file array from $_FILES
+     * @return array<string, mixed> Individual file array
      */
     private function convertSingleFileToIndividualFile(array $singleFileArray): array
     {
@@ -425,22 +607,24 @@ class FileUploadService
      * Save files from any input types (base64 data URIs and $_FILES arrays)
      * Processes each item individually based on automatic type detection
      *
-     * @param array $inputs Array of input types (base64 strings, $_FILES arrays, etc.)
-     * @param string $uploadDir The directory to save files to
+     * @param array<string|array<string, mixed>> $inputs Array of input types (base64 strings, $_FILES arrays, etc.)
+     * @param string $uploadDestination The destination to save files to (directory, bucket/key prefix, etc.)
      * @param array<string> $filenames Array of filenames corresponding to each input
      * @param bool $overwriteExisting Whether to overwrite existing files (default: false)
      * @return FileUploadResult Detailed result with successful uploads and errors
-     * @throws RuntimeException If upload directory cannot be created or is not writable
+     * @throws RuntimeException If upload destination cannot be created or is not writable
      */
     private function saveFromInput(
         array $inputs,
-        string $uploadDir,
+        string $uploadDestination,
         array $filenames,
         bool $overwriteExisting = false,
         bool $generateUniqueFilenames = false
     ): FileUploadResult {
-        // Ensure upload directory exists
-        $this->ensureUploadDirectoryExists($uploadDir);
+        // Ensure upload destination exists & is accessible
+        if ($this->fileSaver) {
+            $this->fileSaver->ensureUploadDestinationExists($uploadDestination);
+        }
 
         // Process inputs and expand any multi-file upload arrays
         $processedInputs = [];
@@ -448,8 +632,10 @@ class FileUploadService
         $filenameIndex = 0;
 
         foreach ($inputs as $index => $input) {
-            if ($this->isMultiFileUploadArray($input)) {
+            if ($this->isMultiFileUploadArray($input) && is_array($input)) {
                 // This is a multi-file upload array, expand it
+                // Type assertion: we know this is a multi-file array structure
+                /** @var array<string, array<int|string, mixed>> $input */
                 $individualFiles = $this->convertMultiFileToIndividualFiles($input);
                 $fileCount = count($individualFiles);
 
@@ -468,7 +654,7 @@ class FileUploadService
                 }
 
                 $filenameIndex += $fileCount;
-            } elseif ($this->isSingleFileUploadArray($input)) {
+            } elseif ($this->isSingleFileUploadArray($input) && is_array($input)) {
                 // This is a single file upload array, convert it to individual file format
                 $individualFile = $this->convertSingleFileToIndividualFile($input);
                 $processedInputs[] = $individualFile;
@@ -493,7 +679,7 @@ class FileUploadService
 
         // Generate unique filenames if requested
         if ($generateUniqueFilenames) {
-            $filenames = $this->collisionResolver->generateUniqueFilenames($uploadDir, $filenames);
+            $filenames = $this->collisionResolver->generateUniqueFilenames($uploadDestination, $filenames);
         }
 
         // Initialize tracking arrays
@@ -508,20 +694,20 @@ class FileUploadService
             $filename = $filenames[$index];
 
             try {
-                // Create FileDTO based on input type
-                if ($this->isFileUploadArray($input)) {
-                    // Create FileDTO from $_FILES array
-                    $fileDTO = FileDTO::fromFilesArray($input, $filename);
+                // Create FileUploadDTO based on input type
+                if ($this->isFileUploadArray($input) && is_array($input)) {
+                    // Create FileUploadDTO from $_FILES array
+                    $fileUploadDTO = FileUploadDTO::fromFilesArray($input, $filename);
 
                     // Process and save from file upload
-                    $result = $this->fileUploadSave->processFileUpload($fileDTO, $uploadDir, $overwriteExisting, $this->allowedFileTypes);
+                    $result = $this->fileUploadSave->processFileUpload($fileUploadDTO, $uploadDestination, $overwriteExisting, $this->allowedFileTypes);
                     $this->handleSaveResult($result);
-                } else {
-                    // Create FileDTO from base64 data URI
-                    $fileDTO = FileDTO::fromDataUri($input, $filename, $this->validator);
+                } elseif (is_string($input)) {
+                    // Create DataUriDTO from base64 data URI
+                    $dataUriDTO = DataUriDTO::fromDataUri($input, $filename);
 
                     // Process and save from base64 input
-                    $result = $this->fileUploadSave->processBase64Input($fileDTO, $uploadDir, $overwriteExisting, $this->allowedFileTypes);
+                    $result = $this->fileUploadSave->processBase64Input($dataUriDTO, $uploadDestination, $overwriteExisting, $this->allowedFileTypes);
                     $this->handleSaveResult($result);
                 }
             } catch (RuntimeException $e) {
@@ -543,15 +729,25 @@ class FileUploadService
     /**
      * Handle the result from file save operations
      *
-     * @param array $result Result array from FileUploadSave
+     * @param array{success: bool, filePath?: string, error?: FileUploadError} $result Result array from FileUploadSave
      */
     private function handleSaveResult(array $result): void
     {
         if ($result['success']) {
-            $this->savedFilePaths[] = $result['filePath'];
-            $this->savedFiles[] = $result['filePath']; // Track for potential rollback
+            // Construct full path for FilesystemSaver
+            $filePath = $result['filePath'] ?? '';
+            if ($filePath && $this->fileUploadSave->getFileSaver() instanceof FilesystemSaver) {
+                $basePath = $this->fileUploadSave->getFileSaver()->getBasePath();
+                $filePath = rtrim($basePath, '/') . '/' . ltrim($filePath, '/');
+            }
+
+            $this->savedFilePaths[] = $filePath;
+            $this->savedFiles[] = $filePath; // Track for potential rollback
         } else {
-            $this->errors[] = $result['error'];
+            $error = $result['error'] ?? null;
+            if ($error instanceof FileUploadError) {
+                $this->errors[] = $error;
+            }
 
             // Rollback if enabled
             if ($this->rollbackOnError) {
@@ -593,7 +789,8 @@ class FileUploadService
 
         // First check if the specific extension is explicitly allowed
         foreach ($this->allowedFileTypes as $allowedType) {
-            if (strtolower($allowedType) === $extension) {
+            $allowedTypeStr = $allowedType instanceof FileTypeEnum ? $allowedType->value : $allowedType;
+            if (strtolower($allowedTypeStr) === $extension) {
                 return true;
             }
         }
@@ -607,6 +804,7 @@ class FileUploadService
 
     /**
      * Clean filename by removing special characters and making it safe for filesystem
+     * Enhanced with security measures including length limits and Unicode normalization
      *
      * @param string $filename The filename to clean
      * @param bool $removeUnderscores Whether to remove underscores (default: false)
@@ -620,64 +818,7 @@ class FileUploadService
         bool $removeSpaces = false,
         array $removeCustomChars = []
     ): string {
-        // Remove underscores if requested
-        if ($removeUnderscores) {
-            $filename = str_replace("_", "", $filename);
-        }
-
-        // Remove spaces if requested
-        if ($removeSpaces) {
-            $filename = str_replace(" ", "", $filename);
-        }
-
-        // Remove custom characters if provided
-        if (!empty($removeCustomChars)) {
-            $filename = str_replace($removeCustomChars, "", $filename);
-        }
-
-        // Remove other special characters that are problematic for filesystems
-        $filename = str_replace(
-            ['\\', '/', ':', '*', '?', '"', '<', '>', '|', '#'],
-            '',
-            $filename
-        );
-
-        // Remove any remaining control characters
-        $filename = preg_replace('/[\x00-\x1f\x7f]/', '', $filename);
-
-        // Trim whitespace
-        $filename = trim($filename);
-
-        // Ensure filename is not empty
-        if (empty($filename)) {
-            $filename = 'unnamed';
-        }
-
-        return $filename;
-    }
-
-
-    /**
-     * Ensure upload directory exists and is writable
-     *
-     * @param string $uploadDir The directory to ensure exists and is writable
-     * @throws RuntimeException If directory cannot be created or is not writable
-     */
-    private function ensureUploadDirectoryExists(string $uploadDir): void
-    {
-        if (!is_dir($uploadDir)) {
-            if (!$this->createDirectory) {
-                throw new RuntimeException("Upload directory does not exist: {$uploadDir}");
-            }
-
-            if (!mkdir($uploadDir, $this->directoryPermissions, true)) {
-                throw new RuntimeException("Failed to create upload directory: {$uploadDir}");
-            }
-        }
-
-        if (!is_writable($uploadDir)) {
-            throw new RuntimeException("Upload directory is not writable: {$uploadDir}");
-        }
+        return FilenameSanitizer::cleanFilename($filename, $removeUnderscores, $removeSpaces, $removeCustomChars);
     }
 
 
@@ -705,7 +846,7 @@ class FileUploadService
         }
 
         if (is_callable($strategy)) {
-            return $strategy;
+            return 'custom'; // Return a string identifier for callable strategies
         }
 
         // Try to derive enum from string
@@ -735,15 +876,21 @@ class FileUploadService
         $count = count($allowedTypes);
 
         if ($count === 1) {
-            return ucfirst($allowedTypes[0]) . ' files only';
+            $firstType = $allowedTypes[0] instanceof FileTypeEnum ? $allowedTypes[0]->value : $allowedTypes[0];
+            return ucfirst($firstType) . ' files only';
         }
 
         if ($count === 2) {
-            return ucfirst($allowedTypes[0]) . ' and ' . $allowedTypes[1] . ' files';
+            $firstType = $allowedTypes[0] instanceof FileTypeEnum ? $allowedTypes[0]->value : $allowedTypes[0];
+            $secondType = $allowedTypes[1] instanceof FileTypeEnum ? $allowedTypes[1]->value : $allowedTypes[1];
+            return ucfirst($firstType) . ' and ' . $secondType . ' files';
         }
 
         $lastType = array_pop($allowedTypes);
-        $types = implode(', ', $allowedTypes) . ', and ' . $lastType;
+        $lastTypeStr = $lastType instanceof FileTypeEnum ? $lastType->value : $lastType;
+        $types = implode(', ', array_map(function ($type) {
+            return $type instanceof FileTypeEnum ? $type->value : $type;
+        }, $allowedTypes)) . ', and ' . $lastTypeStr;
         return ucfirst($types) . ' files';
     }
 
@@ -758,6 +905,7 @@ class FileUploadService
     {
         return match ($category) {
             FileTypeEnum::IMAGE->value   => array_values($this->validator->getSupportedImageTypes()),
+            FileTypeEnum::VIDEO->value   => array_values($this->validator->getSupportedVideoTypes()),
             FileTypeEnum::PDF->value     => array_values($this->validator->getSupportedPdfTypes()),
             FileTypeEnum::CAD->value     => array_values($this->validator->getSupportedCadTypes()),
             FileTypeEnum::DOC->value     => array_values($this->validator->getSupportedDocumentTypes()),

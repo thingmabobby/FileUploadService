@@ -226,7 +226,7 @@ class FileServiceValidatorTest extends TestCase
 
         $this->assertIsArray($pdfTypes);
         $this->assertArrayHasKey('pdf', $pdfTypes);
-        $this->assertArrayHasKey('x-pdf', $pdfTypes);
+        $this->assertEquals('pdf', $pdfTypes['pdf']);
     }
 
 

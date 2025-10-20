@@ -16,6 +16,7 @@ enum FileTypeEnum: string
     case CAD     = 'cad';
     case DOC     = 'doc';
     case ARCHIVE = 'archive';
+    case VIDEO   = 'video';
     case ALL     = 'all';
 
     /**
@@ -29,6 +30,7 @@ enum FileTypeEnum: string
             self::CAD     => 'CAD Files',
             self::DOC     => 'Documents',
             self::ARCHIVE => 'Archives',
+            self::VIDEO   => 'Videos',
             self::ALL     => 'All Files',
         };
     }

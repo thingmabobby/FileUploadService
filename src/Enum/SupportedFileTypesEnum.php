@@ -24,11 +24,11 @@ enum SupportedFileTypesEnum: string
     case IMAGE_HEIC = 'heic';
     case IMAGE_HEIF = 'heif';
 
-        // PDF types
+        // PDF types (all map to .pdf extension but have different MIME types)
     case PDF_STANDARD = 'pdf';
     case PDF_X_PDF    = 'x-pdf';
     case PDF_ACROBAT  = 'acrobat';
-    case PDF_VND_PDF  = 'vnd.pdf';
+    case PDF_VND_PDF  = 'vnd-pdf';
 
         // Document types
     case DOC_WORD        = 'doc';
@@ -62,6 +62,20 @@ enum SupportedFileTypesEnum: string
     case ARCHIVE_TAR = 'tar';
     case ARCHIVE_GZ  = 'gz';
 
+        // Video types
+    case VIDEO_MP4  = 'mp4';
+    case VIDEO_AVI  = 'avi';
+    case VIDEO_MOV  = 'mov';
+    case VIDEO_WMV  = 'wmv';
+    case VIDEO_FLV  = 'flv';
+    case VIDEO_WEBM = 'webm';
+    case VIDEO_MKV  = 'mkv';
+    case VIDEO_MPEG = 'mpeg';
+    case VIDEO_MPG  = 'mpg';
+    case VIDEO_3GP  = '3gp';
+    case VIDEO_M4V  = 'm4v';
+    case VIDEO_OGV  = 'ogv';
+
 
     /**
      * Get the file extension for this type
@@ -74,56 +88,16 @@ enum SupportedFileTypesEnum: string
 
     /**
      * Get the standard extension (for cases where multiple formats map to same extension)
+     * This is needed for PDF types that have different MIME types but same extension
      */
     public function getStandardExtension(): string
     {
         return match ($this) {
-            // Image types that map to same extension
-            self::IMAGE_JPEG => 'jpg',
-            self::IMAGE_PNG  => 'png',
-            self::IMAGE_GIF  => 'gif',
-            self::IMAGE_WEBP => 'webp',
-            self::IMAGE_AVIF => 'avif',
-            self::IMAGE_JXL  => 'jxl',
-            self::IMAGE_BMP  => 'bmp',
-            self::IMAGE_TIFF => 'tiff',
-            self::IMAGE_HEIC => 'heic',
-            self::IMAGE_HEIF => 'heif',
-
-            // PDF types all map to pdf
+            // PDF types all map to pdf extension
             self::PDF_STANDARD, self::PDF_X_PDF, self::PDF_ACROBAT, self::PDF_VND_PDF => 'pdf',
 
-            // Document types
-            self::DOC_WORD        => 'doc',
-            self::DOC_WORDX       => 'docx',
-            self::DOC_EXCEL       => 'xls',
-            self::DOC_EXCELX      => 'xlsx',
-            self::DOC_POWERPOINT  => 'ppt',
-            self::DOC_POWERPOINTX => 'pptx',
-            self::DOC_TEXT        => 'txt',
-            self::DOC_RTF         => 'rtf',
-            self::DOC_CSV         => 'csv',
-            self::DOC_XML         => 'xml',
-            self::DOC_JSON        => 'json',
-            self::DOC_ODT         => 'odt',
-            self::DOC_ODS         => 'ods',
-            self::DOC_ODP         => 'odp',
-
-            // CAD types
-            self::CAD_DWG    => 'dwg',
-            self::CAD_DXF    => 'dxf',
-            self::CAD_STEP   => 'step',
-            self::CAD_IGES   => 'iges',
-            self::CAD_STL    => 'stl',
-            self::CAD_SLDPRT => 'sldprt',
-            self::CAD_SLDASM => 'sldasm',
-
-            // Archive types
-            self::ARCHIVE_ZIP => 'zip',
-            self::ARCHIVE_RAR => 'rar',
-            self::ARCHIVE_7Z  => '7z',
-            self::ARCHIVE_TAR => 'tar',
-            self::ARCHIVE_GZ  => 'gz',
+            // All other types use their enum value as the extension
+            default => $this->getExtension(),
         };
     }
 
@@ -183,6 +157,20 @@ enum SupportedFileTypesEnum: string
             self::ARCHIVE_7Z  => 'application/x-7z-compressed',
             self::ARCHIVE_TAR => 'application/x-tar',
             self::ARCHIVE_GZ  => 'application/gzip',
+
+            // Video MIME types
+            self::VIDEO_MP4  => 'video/mp4',
+            self::VIDEO_AVI  => 'video/x-msvideo',
+            self::VIDEO_MOV  => 'video/quicktime',
+            self::VIDEO_WMV  => 'video/x-ms-wmv',
+            self::VIDEO_FLV  => 'video/x-flv',
+            self::VIDEO_WEBM => 'video/webm',
+            self::VIDEO_MKV  => 'video/x-matroska',
+            self::VIDEO_MPEG => 'video/mpeg',
+            self::VIDEO_MPG  => 'video/mpeg',
+            self::VIDEO_3GP  => 'video/3gpp',
+            self::VIDEO_M4V  => 'video/x-m4v',
+            self::VIDEO_OGV  => 'video/ogg',
         };
     }
 
@@ -214,12 +202,19 @@ enum SupportedFileTypesEnum: string
             // Archive types
             self::ARCHIVE_ZIP, self::ARCHIVE_RAR, self::ARCHIVE_7Z, self::ARCHIVE_TAR,
             self::ARCHIVE_GZ => FileTypeEnum::ARCHIVE,
+
+            // Video types
+            self::VIDEO_MP4, self::VIDEO_AVI, self::VIDEO_MOV, self::VIDEO_WMV,
+            self::VIDEO_FLV, self::VIDEO_WEBM, self::VIDEO_MKV, self::VIDEO_MPEG,
+            self::VIDEO_MPG, self::VIDEO_3GP, self::VIDEO_M4V, self::VIDEO_OGV => FileTypeEnum::VIDEO,
         };
     }
 
 
     /**
      * Get all supported types for a specific category
+     * 
+     * @return array<int, self> Array of supported file types for the category
      */
     public static function getTypesForCategory(FileTypeEnum $category): array
     {
@@ -232,6 +227,8 @@ enum SupportedFileTypesEnum: string
 
     /**
      * Get all extensions for a specific category
+     * 
+     * @return array<int, string> Array of extensions for the category
      */
     public static function getExtensionsForCategory(FileTypeEnum $category): array
     {

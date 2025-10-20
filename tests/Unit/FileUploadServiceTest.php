@@ -4,7 +4,8 @@ declare(strict_types=1);
 
 namespace FileUploadService\Tests\Unit;
 
-use FileUploadService\DTO\FileDTO;
+use FileUploadService\DTO\FileUploadDTO;
+use FileUploadService\DTO\DataUriDTO;
 use FileUploadService\Enum\CollisionStrategyEnum;
 use FileUploadService\Enum\FileTypeEnum;
 use FileUploadService\FileUploadService;
@@ -347,9 +348,21 @@ class FileUploadServiceTest extends TestCase
 
         $result = $this->service->save(
             [$imageDataUri],
-            $this->testDir,
+            'uploads', // Use a subdirectory
             ['test.jpg']
         );
+
+        if (!$result->hasSuccessfulUploads()) {
+            foreach ($result->errors as $error) {
+                echo "Error: " . $error->getDescription() . "\n";
+            }
+        }
+
+        // Debug: Check if the file was created but validation failed
+        if ($result->hasErrors()) {
+            echo "Total errors: " . count($result->errors) . "\n";
+            echo "Total files processed: " . $result->totalFiles . "\n";
+        }
 
         $this->assertTrue($result->hasSuccessfulUploads());
         $this->assertFalse($result->hasErrors());

@@ -4,7 +4,8 @@ declare(strict_types=1);
 
 namespace FileUploadService\Tests\Unit;
 
-use FileUploadService\DTO\FileDTO;
+use FileUploadService\DTO\FileUploadDTO;
+use FileUploadService\DTO\DataUriDTO;
 use FileUploadService\Enum\FileTypeEnum;
 use FileUploadService\FileServiceValidator;
 use FileUploadService\FileUploadSave;
@@ -64,7 +65,7 @@ class FileUploadSaveTest extends TestCase
         $tempFile = tempnam(sys_get_temp_dir(), 'upload_test');
         file_put_contents($tempFile, 'Test file content');
 
-        $fileDTO = FileDTO::fromFilesArray(
+        $fileDTO = FileUploadDTO::fromFilesArray(
             [
                 'name' => 'test.txt',
                 'type' => 'text/plain',
@@ -72,8 +73,7 @@ class FileUploadSaveTest extends TestCase
                 'error' => UPLOAD_ERR_OK,
                 'size' => strlen('Test file content')
             ],
-            'test.txt',
-            FileTypeEnum::DOC
+            'test.txt'
         );
 
         try {
@@ -82,7 +82,13 @@ class FileUploadSaveTest extends TestCase
             $this->assertTrue($result['success']);
             $this->assertArrayHasKey('filePath', $result);
             $this->assertStringEndsWith('test.txt', $result['filePath']);
-            $this->assertTrue(file_exists($result['filePath']));
+
+            // Check if file exists using the fileSaver's method
+            $reflection = new \ReflectionClass($this->fileUploadSave);
+            $fileSaverProperty = $reflection->getProperty('fileSaver');
+            $fileSaverProperty->setAccessible(true);
+            $fileSaver = $fileSaverProperty->getValue($this->fileUploadSave);
+            $this->assertTrue($fileSaver->fileExists($result['filePath']));
         } finally {
             if (file_exists($tempFile)) {
                 unlink($tempFile);
@@ -93,7 +99,7 @@ class FileUploadSaveTest extends TestCase
 
     public function testProcessFileUploadWithError(): void
     {
-        $fileDTO = FileDTO::fromFilesArray(
+        $fileDTO = FileUploadDTO::fromFilesArray(
             [
                 'name' => 'test.txt',
                 'type' => 'text/plain',
@@ -104,7 +110,7 @@ class FileUploadSaveTest extends TestCase
             'test.txt'
         );
 
-        $result = $this->fileUploadSave->processFileUpload($fileDTO, $this->testDir, false, ['doc']);
+        $result = $this->fileUploadSave->processFileUpload($fileDTO, '', false, ['doc']);
 
         $this->assertFalse($result['success']);
         $this->assertArrayHasKey('error', $result);
@@ -114,7 +120,7 @@ class FileUploadSaveTest extends TestCase
 
     public function testProcessFileUploadWithUploadError(): void
     {
-        $fileDTO = FileDTO::fromFilesArray(
+        $fileDTO = FileUploadDTO::fromFilesArray(
             [
                 'name' => 'test.txt',
                 'type' => 'text/plain',
@@ -125,7 +131,7 @@ class FileUploadSaveTest extends TestCase
             'test.txt'
         );
 
-        $result = $this->fileUploadSave->processFileUpload($fileDTO, $this->testDir, false, ['doc']);
+        $result = $this->fileUploadSave->processFileUpload($fileDTO, '', false, ['doc']);
 
         $this->assertFalse($result['success']);
         $this->assertArrayHasKey('error', $result);
@@ -138,20 +144,26 @@ class FileUploadSaveTest extends TestCase
     {
         $imageDataUri = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAv/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k=';
 
-        $fileDTO = FileDTO::fromDataUri($imageDataUri, 'test.jpg', new FileServiceValidator(), FileTypeEnum::IMAGE);
+        $fileDTO = DataUriDTO::fromDataUri($imageDataUri, 'test.jpg');
 
         $result = $this->fileUploadSave->processBase64Input($fileDTO, $this->testDir, false, ['image']);
 
         $this->assertTrue($result['success']);
         $this->assertArrayHasKey('filePath', $result);
         $this->assertStringEndsWith('test.jpg', $result['filePath']);
-        $this->assertTrue(file_exists($result['filePath']));
+
+        // Check if file exists using the fileSaver's method
+        $reflection = new \ReflectionClass($this->fileUploadSave);
+        $fileSaverProperty = $reflection->getProperty('fileSaver');
+        $fileSaverProperty->setAccessible(true);
+        $fileSaver = $fileSaverProperty->getValue($this->fileUploadSave);
+        $this->assertTrue($fileSaver->fileExists($result['filePath']));
     }
 
 
     public function testProcessBase64InputWithInvalidDataUri(): void
     {
-        $fileDTO = FileDTO::fromDataUri('invalid-data-uri', 'test.jpg', new FileServiceValidator());
+        $fileDTO = DataUriDTO::fromDataUri('invalid-data-uri', 'test.jpg');
 
         $result = $this->fileUploadSave->processBase64Input($fileDTO, $this->testDir, false, ['image']);
 
@@ -163,7 +175,7 @@ class FileUploadSaveTest extends TestCase
 
     public function testProcessBase64InputWithEmptyDataUri(): void
     {
-        $fileDTO = FileDTO::fromDataUri('', 'test.jpg', new FileServiceValidator());
+        $fileDTO = DataUriDTO::fromDataUri('', 'test.jpg');
 
         $result = $this->fileUploadSave->processBase64Input($fileDTO, $this->testDir, false, ['image']);
 

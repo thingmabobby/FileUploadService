@@ -6,9 +6,10 @@ namespace FileUploadService;
 
 use FileUploadService\FileUploadError;
 use FileUploadService\FileServiceValidator;
-use FileUploadService\DTO\FileDTO;
-use FileUploadService\Enum\UploadErrorCodeEnum;
+use FileUploadService\DTO\FileUploadDTO;
+use FileUploadService\DTO\DataUriDTO;
 use FileUploadService\Enum\FileTypeEnum;
+use FileUploadService\Enum\UploadErrorCodeEnum;
 use RuntimeException;
 
 /**
@@ -20,6 +21,13 @@ use RuntimeException;
 class FileUploadSave
 {
     /**
+     * Array of temp files to clean up
+     * 
+     * @var array<string>
+     */
+    private array $tempFilesToCleanup = [];
+
+    /**
      * Constructor
      *
      * @param FileServiceValidator $validator File validator instance
@@ -27,24 +35,32 @@ class FileUploadSave
      * @param bool $convertHeicToJpg Whether to convert HEIC/HEIF files to JPEG
      */
     public function __construct(
-        private FileServiceValidator $validator,
-        private FileSaverInterface $fileSaver,
+        private readonly FileServiceValidator $validator,
+        private readonly FileSaverInterface $fileSaver,
         private readonly bool $convertHeicToJpg = true
     ) {}
 
+    /**
+     * Destructor - clean up any remaining temp files
+     */
+    public function __destruct()
+    {
+        $this->cleanupTempFiles();
+    }
+
 
     /**
-     * Process a single file upload using FileDTO
+     * Process a single file upload using FileUploadDTO
      *
-     * @param FileDTO $fileDTO The file data transfer object
-     * @param string $uploadDir The upload directory
+     * @param FileUploadDTO $fileDTO The file upload data transfer object
+     * @param string $uploadDestination The upload destination (directory, bucket/key prefix, etc.)
      * @param bool $overwriteExisting Whether to overwrite existing files
-     * @param array $allowedFileTypes Array of allowed file types
+     * @param array<FileTypeEnum|string> $allowedFileTypes Array of allowed file types
      * @return array{success: bool, filePath?: string, error?: FileUploadError}
      */
     public function processFileUpload(
-        FileDTO $fileDTO,
-        string $uploadDir,
+        FileUploadDTO $fileDTO,
+        string $uploadDestination,
         bool $overwriteExisting = false,
         array $allowedFileTypes = []
     ): array {
@@ -59,7 +75,16 @@ class FileUploadSave
             ];
         }
 
-        // Validate uploaded file before processing
+        // Check file type allowance first
+        $isAllowed = $this->validator->isFileTypeAllowed($fileDTO->extension, $fileDTO->tmpPath, $allowedFileTypes);
+        if (!$isAllowed) {
+            return [
+                'success' => false,
+                'error' => new FileUploadError($fileDTO->filename, "File type not allowed: {$fileDTO->extension}")
+            ];
+        }
+
+        // Validate uploaded file for basic properties (existence, readability, etc.)
         if (!$this->validator->validateUploadedFile($fileDTO->tmpPath, $fileDTO->originalName)) {
             return [
                 'success' => false,
@@ -67,95 +92,99 @@ class FileUploadSave
             ];
         }
 
-        // Check if file type is allowed by extension
-        if (!$this->isFileTypeAllowedByExtension($fileDTO->extension, $allowedFileTypes)) {
-            return [
-                'success' => false,
-                'error' => new FileUploadError($fileDTO->filename, "File type not allowed: {$fileDTO->extension}")
-            ];
+        // Handle HEIC/HEIF conversion in the temp directory if needed
+        $processedFilePath = $this->handleHeicConversion($fileDTO->tmpPath, $fileDTO->extension, $fileDTO->filename);
+
+        // Update filename if it was converted (HEIC -> JPG)
+        $finalFilename = $fileDTO->filename;
+        if ($processedFilePath !== $fileDTO->tmpPath) {
+            // File was converted, update the filename to .jpg
+            $finalFilename = pathinfo($fileDTO->filename, PATHINFO_FILENAME) . '.jpg';
         }
 
-        // Move uploaded file using the file saver
-        // Construct the relative path within the upload directory
-        $relativePath = ltrim($uploadDir, '/') . '/' . $fileDTO->filename;
+        // Move processed file using the file saver
+        // Let each implementation handle path resolution appropriately
+        $targetPath = $this->fileSaver->resolveTargetPath($uploadDestination, $finalFilename);
 
         try {
-            $savedPath = $this->fileSaver->moveUploadedFile($fileDTO->tmpPath, $relativePath, $overwriteExisting);
+            $savedPath = $this->fileSaver->saveFile($processedFilePath, $targetPath, $overwriteExisting);
 
-            // Handle HEIC/HEIF conversion if needed
-            $processedFilePath = $this->handleHeicConversion(
-                filePath: $savedPath,
-                extension: $fileDTO->extension,
-                filename: $fileDTO->filename
-            );
-
-            if ($processedFilePath === null) {
-                return [
-                    'success' => false,
-                    'error' => new FileUploadError($fileDTO->filename, "HEIC conversion failed")
-                ];
+            // Track temp files for cleanup in destructor
+            $this->trackTempFileForCleanup($fileDTO->tmpPath);
+            if ($processedFilePath !== $fileDTO->tmpPath) {
+                $this->trackTempFileForCleanup($processedFilePath);
             }
 
             return [
                 'success' => true,
-                'filePath' => $processedFilePath
+                'filePath' => $savedPath
             ];
         } catch (RuntimeException $e) {
             return [
                 'success' => false,
-                'error' => new FileUploadError($fileDTO->filename, $e->getMessage())
+                'error' => new FileUploadError($fileDTO->filename, "Failed to save file: " . $e->getMessage())
             ];
         }
     }
 
 
     /**
-     * Process a single base64 data URI input using FileDTO
+     * Process a single base64 data URI input using DataUriDTO
      *
-     * @param FileDTO $fileDTO The file data transfer object
-     * @param string $uploadDir The upload directory
+     * @param DataUriDTO $dataUriDTO The data URI data transfer object
+     * @param string $uploadDestination The upload destination (directory, bucket/key prefix, etc.)
      * @param bool $overwriteExisting Whether to overwrite existing files
-     * @param array $allowedFileTypes Array of allowed file types
+     * @param array<FileTypeEnum|string> $allowedFileTypes Array of allowed file types
      * @return array{success: bool, filePath?: string, error?: FileUploadError}
      */
     public function processBase64Input(
-        FileDTO $fileDTO,
-        string $uploadDir,
+        DataUriDTO $dataUriDTO,
+        string $uploadDestination,
         bool $overwriteExisting = false,
         array $allowedFileTypes = []
     ): array {
-        if (!$fileDTO->isDataUri() || !$fileDTO->dataUri || trim($fileDTO->dataUri) === '') {
+        if (!$dataUriDTO->dataUri || trim($dataUriDTO->dataUri) === '') {
             return [
                 'success' => false,
-                'error' => new FileUploadError($fileDTO->filename, "Empty or invalid data URI")
+                'error' => new FileUploadError($dataUriDTO->filename, "Empty or invalid data URI")
             ];
         }
 
         // Validate data URI before processing
-        if (!$this->validator->validateBase64DataUri($fileDTO->dataUri)) {
+        if (!$this->validator->validateBase64DataUri($dataUriDTO->dataUri)) {
             return [
                 'success' => false,
-                'error' => new FileUploadError($fileDTO->filename, "Invalid data URI format")
+                'error' => new FileUploadError($dataUriDTO->filename, "Invalid data URI format")
             ];
         }
 
         try {
-            $filePath = $this->saveDataUriToFile(
-                dataUri: $fileDTO->dataUri,
-                uploadDir: $uploadDir,
-                filename: $fileDTO->filename,
-                overwriteExisting: $overwriteExisting,
-                allowedFileTypes: $allowedFileTypes
+            // Create a temporary file for the data URI content (same flow as $_FILES)
+            $tempFilePath = $this->createTempFileFromDataUri($dataUriDTO->dataUri);
+
+            // Track temp file for cleanup in destructor
+            $this->trackTempFileForCleanup($tempFilePath);
+
+            // Create a FileUploadDTO with the temp path for processing
+            $fileUploadDTO = new FileUploadDTO(
+                filename: $dataUriDTO->filename,
+                originalName: $dataUriDTO->filename, // Use filename as original name for data URIs
+                tmpPath: $tempFilePath,
+                extension: $dataUriDTO->extension,
+                mimeType: $dataUriDTO->mimeType,
+                fileTypeCategory: $dataUriDTO->fileTypeCategory,
+                size: $dataUriDTO->size,
+                uploadError: 0 // Success
             );
 
-            return [
-                'success' => true,
-                'filePath' => $filePath
-            ];
+            // Use the same processing flow as file uploads
+            $result = $this->processFileUpload($fileUploadDTO, $uploadDestination, $overwriteExisting, $allowedFileTypes);
+
+            return $result;
         } catch (RuntimeException $e) {
             return [
                 'success' => false,
-                'error' => new FileUploadError($fileDTO->filename, $e->getMessage())
+                'error' => new FileUploadError($dataUriDTO->filename, $e->getMessage())
             ];
         }
     }
@@ -168,19 +197,47 @@ class FileUploadSave
      */
     public function isHeicConversionAvailable(): bool
     {
-        return class_exists('Maestroerror\HeicToJpg') && method_exists('Maestroerror\HeicToJpg', 'convertImage');
+        return class_exists('Maestroerror\HeicToJpg');
     }
 
 
     /**
-     * Handle HEIC/HEIF file detection and conversion to JPEG
+     * Create a temporary file from data URI content
+     *
+     * @param string $dataUri The data URI
+     * @return string Path to the temporary file
+     * @throws RuntimeException If temp file creation fails
+     */
+    private function createTempFileFromDataUri(string $dataUri): string
+    {
+        // Extract file content from data URI
+        $fileContent = $this->extractDataFromUri($dataUri);
+
+        // Create temporary file using tempnam() for persistence
+        $tempPath = tempnam(sys_get_temp_dir(), 'file_upload_');
+        if ($tempPath === false) {
+            throw new RuntimeException("Failed to create temporary file");
+        }
+
+        // Write content to temp file
+        if (file_put_contents($tempPath, $fileContent) === false) {
+            unlink($tempPath);
+            throw new RuntimeException("Failed to write data URI content to temporary file");
+        }
+
+        return $tempPath;
+    }
+
+
+    /**
+     * Handle HEIC/HEIF conversion
      *
      * @param string $filePath Path to the uploaded file
      * @param string $extension File extension
      * @param string $filename Original filename
-     * @return string|null Path to the file (converted if HEIC/HEIF), or null if conversion failed
+     * @return string Path to the file (converted if HEIC/HEIF)
      */
-    private function handleHeicConversion(string $filePath, string $extension, string $filename): ?string
+    private function handleHeicConversion(string $filePath, string $extension, string $filename): string
     {
         // If not a HEIC/HEIF file, return the original path
         if (!in_array($extension, ['heic', 'heif'])) {
@@ -222,7 +279,8 @@ class FileUploadSave
         // Create a temporary directory for conversion if it doesn't exist
         $tempDir = sys_get_temp_dir() . '/heic_conversion_' . uniqid();
         if (!is_dir($tempDir)) {
-            if (!mkdir($tempDir, 0777, true)) {
+            // Use secure permissions (owner read/write/execute only)
+            if (!mkdir($tempDir, 0700, true)) {
                 throw new RuntimeException("Failed to create temporary directory for HEIC conversion");
             }
         }
@@ -234,7 +292,10 @@ class FileUploadSave
             $heicFilename = $baseFilename . '.heic';
 
             // Copy the original HEIC file to the destination
-            $this->fileSaver->saveFile(file_get_contents($heicFilePath), $heicFilename, true);
+            $fileContent = file_get_contents($heicFilePath);
+            if ($fileContent !== false) {
+                $this->fileSaver->saveFile($fileContent, $heicFilename, true);
+            }
 
             return $heicFilename;
         }
@@ -251,14 +312,23 @@ class FileUploadSave
             // Save the converted image using the file saver
             $this->fileSaver->saveFile($convertedImageData, $jpgFilename, true);
 
+            // Clean up temporary directory
+            $this->cleanupTempDirectory($tempDir);
+
             return $jpgFilename;
         } catch (RuntimeException) {
+            // Clean up temporary directory on failure
+            $this->cleanupTempDirectory($tempDir);
+
             // If conversion fails, gracefully degrade to saving the original HEIC file
             $baseFilename = pathinfo($originalFilename, PATHINFO_FILENAME);
             $heicFilename = $baseFilename . '.heic';
 
             // Copy the original HEIC file to the destination
-            $this->fileSaver->saveFile(file_get_contents($heicFilePath), $heicFilename, true);
+            $fileContent = file_get_contents($heicFilePath);
+            if ($fileContent !== false) {
+                $this->fileSaver->saveFile($fileContent, $heicFilename, true);
+            }
 
             return $heicFilename;
         } finally {
@@ -295,196 +365,28 @@ class FileUploadSave
 
 
     /**
-     * Check if file type is allowed by extension
+     * Clean up temporary directory and its contents
      *
-     * @param string $extension File extension
-     * @param array $allowedFileTypes Array of allowed file types
-     * @return bool True if allowed, false otherwise
+     * @param string $tempDir Path to temporary directory
      */
-    private function isFileTypeAllowedByExtension(string $extension, array $allowedFileTypes): bool
+    private function cleanupTempDirectory(string $tempDir): void
     {
-        // If no restrictions, allow all
-        if (empty($allowedFileTypes)) {
-            return true;
+        if (!is_dir($tempDir)) {
+            return;
         }
 
-        // Check if specific extension is allowed
-        foreach ($allowedFileTypes as $allowedType) {
-            if (strtolower($allowedType) === strtolower($extension)) {
-                return true;
-            }
-        }
-
-        // Check if file type category is allowed
-        $fileTypeCategory = $this->validator->getFileTypeCategoryFromExtension($extension);
-
-        return $fileTypeCategory !== null && in_array($fileTypeCategory->value, $allowedFileTypes, true);
-    }
-
-
-    /**
-     * Save data URI to file with proper handling based on file type
-     *
-     * @param string $dataUri The data URI
-     * @param string $uploadDir The upload directory
-     * @param string $filename The target filename
-     * @param bool $overwriteExisting Whether to overwrite existing files
-     * @param array $allowedFileTypes Array of allowed file types
-     * @return string Path to the saved file
-     * @throws RuntimeException If saving fails
-     */
-    private function saveDataUriToFile(
-        string $dataUri,
-        string $uploadDir,
-        string $filename,
-        bool $overwriteExisting,
-        array $allowedFileTypes
-    ): string {
-        // Determine file extension based on data URI type, append only if filename lacks an extension
-        $extension = $this->validator->getFileExtension($dataUri);
-        $existingExt = pathinfo($filename, PATHINFO_EXTENSION);
-        if ($extension && $existingExt === '') {
-            $filename = rtrim($filename, '.') . '.' . $extension;
-        }
-
-        // Construct the relative path within the upload directory
-        $relativePath = ltrim($uploadDir, '/') . '/' . $filename;
-
-        // Check if file type is allowed based on restriction mode
-        if (!$this->isFileTypeAllowed($dataUri, $allowedFileTypes)) {
-            $allowedTypes = implode(', ', $allowedFileTypes ?: ['all']);
-            throw new RuntimeException("File type not allowed with current restrictions. Allowed types: {$allowedTypes}");
-        }
-
-        // Determine file type and save accordingly
-        $fileTypeCategory = $this->validator->getFileTypeCategoryFromDataUri($dataUri);
-
-        // Handle special case for images (need processing for different formats)
-        if ($fileTypeCategory === FileTypeEnum::IMAGE->value || $fileTypeCategory === FileTypeEnum::IMAGE) {
-            return $this->saveImageFile($dataUri, $relativePath, $overwriteExisting);
-        }
-
-        // For all other file types, use the generic save method
-        if ($fileTypeCategory === 'unknown' && !$this->isUnrestricted($allowedFileTypes)) {
-            throw new RuntimeException("Unrecognized data URI format");
-        }
-
-        return $this->saveFileFromDataUri($dataUri, $relativePath, $overwriteExisting);
-    }
-
-
-    /**
-     * Check if file type is allowed based on current restriction mode
-     *
-     * @param string $dataUri The data URI to check
-     * @param array $allowedFileTypes Array of allowed file types
-     * @return bool True if the file type is allowed, false otherwise
-     */
-    private function isFileTypeAllowed(string $dataUri, array $allowedFileTypes): bool
-    {
-        // If FILE_TYPE_ALL is allowed, accept any file type
-        if (in_array(FileTypeEnum::ALL->value, $allowedFileTypes, true)) {
-            return true;
-        }
-
-        // Check if specific file extension is allowed
-        $extension = $this->validator->getFileExtension($dataUri);
-        if ($extension) {
-            foreach ($allowedFileTypes as $allowedType) {
-                if (strtolower($allowedType) === strtolower($extension)) {
-                    return true;
+        // Remove all files in the directory
+        $files = glob($tempDir . '/*');
+        if ($files !== false) {
+            foreach ($files as $file) {
+                if (is_file($file)) {
+                    unlink($file);
                 }
             }
         }
 
-        // Check if file type category is allowed
-        $fileTypeCategory = $this->validator->getFileTypeCategoryFromDataUri($dataUri);
-
-        return $fileTypeCategory !== null && in_array($fileTypeCategory->value, $allowedFileTypes, true);
-    }
-
-
-    /**
-     * Check if the service is in unrestricted mode
-     *
-     * @param array $allowedFileTypes Array of allowed file types
-     * @return bool True if unrestricted, false otherwise
-     */
-    private function isUnrestricted(array $allowedFileTypes): bool
-    {
-        return in_array(FileTypeEnum::ALL->value, $allowedFileTypes, true);
-    }
-
-
-    /**
-     * Save image file from data URI
-     *
-     * @param string $dataUri The data URI
-     * @param string $relativePath The relative target path
-     * @param bool $overwriteExisting Whether to overwrite existing files
-     * @return string Path to the saved file
-     * @throws RuntimeException If saving fails
-     */
-    private function saveImageFile(string $dataUri, string $relativePath, bool $overwriteExisting): string
-    {
-        $imageData = $this->extractDataFromUri($dataUri);
-        $image = imagecreatefromstring($imageData);
-
-        if ($image === false) {
-            throw new RuntimeException("Failed to create image from data URI");
-        }
-
-        $extension = strtolower(pathinfo($relativePath, PATHINFO_EXTENSION));
-
-        // Create a temporary file to save the image data
-        $tempFile = tmpfile();
-        $tempPath = stream_get_meta_data($tempFile)['uri'];
-
-        $success = match ($extension) {
-            'jpg', 'jpeg' => imagejpeg($image, $tempPath, 90),
-            'png'         => imagepng($image, $tempPath, 9),
-            'gif'         => imagegif($image, $tempPath),
-            'webp'        => imagewebp($image, $tempPath, 90),
-            'bmp'         => imagebmp($image, $tempPath),
-            default => throw new RuntimeException("Unsupported image format: {$extension}"),
-        };
-
-        imagedestroy($image);
-
-        if (!$success) {
-            fclose($tempFile);
-            throw new RuntimeException("Failed to create temporary image file");
-        }
-
-        // Read the temporary file content and save using FileSaverInterface
-        $imageContent = file_get_contents($tempPath);
-        fclose($tempFile);
-
-        if ($imageContent === false) {
-            throw new RuntimeException("Failed to read temporary image file");
-        }
-
-        $this->fileSaver->saveFile($imageContent, $relativePath, $overwriteExisting);
-
-        return $relativePath;
-    }
-
-
-    /**
-     * Save file from data URI (generic method for all non-image file types)
-     *
-     * @param string $dataUri The data URI
-     * @param string $relativePath The relative target path
-     * @param bool $overwriteExisting Whether to overwrite existing files
-     * @return string Path to the saved file
-     * @throws RuntimeException If saving fails
-     */
-    private function saveFileFromDataUri(string $dataUri, string $relativePath, bool $overwriteExisting): string
-    {
-        $fileData = $this->extractDataFromUri($dataUri);
-        $this->fileSaver->saveFile($fileData, $relativePath, $overwriteExisting);
-
-        return $relativePath;
+        // Remove the directory itself
+        rmdir($tempDir);
     }
 
 
@@ -507,5 +409,41 @@ class FileUploadSave
         }
 
         return $data;
+    }
+
+
+    /**
+     * Track a temp file for cleanup in destructor
+     *
+     * @param string $filePath Path to the temp file
+     */
+    private function trackTempFileForCleanup(string $filePath): void
+    {
+        if (file_exists($filePath)) {
+            $this->tempFilesToCleanup[] = $filePath;
+        }
+    }
+
+    /**
+     * Clean up all tracked temp files
+     */
+    private function cleanupTempFiles(): void
+    {
+        foreach ($this->tempFilesToCleanup as $filePath) {
+            if (file_exists($filePath)) {
+                unlink($filePath);
+            }
+        }
+        $this->tempFilesToCleanup = [];
+    }
+
+    /**
+     * Get the file saver instance
+     *
+     * @return FileSaverInterface The file saver instance
+     */
+    public function getFileSaver(): FileSaverInterface
+    {
+        return $this->fileSaver;
     }
 }

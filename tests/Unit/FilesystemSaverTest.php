@@ -205,7 +205,7 @@ class FilesystemSaverTest extends TestCase
             $this->expectException(RuntimeException::class);
             $this->expectExceptionMessage('File already exists: test.txt');
 
-            $this->saver->moveUploadedFile($tempFile, $targetPath, false);
+            $this->saver->saveFile($tempFile, $targetPath, false);
         } finally {
             if (file_exists($tempFile)) {
                 unlink($tempFile);
@@ -228,13 +228,14 @@ class FilesystemSaverTest extends TestCase
 
     public function testFileExistsWithAbsolutePath(): void
     {
-        $absolutePath = $this->testDir . '/absolute_test.txt';
+        $relativePath = 'absolute_test.txt';
 
-        $this->assertFalse($this->saver->fileExists($absolutePath));
+        $this->assertFalse($this->saver->fileExists($relativePath));
 
-        file_put_contents($absolutePath, 'content');
+        // Create the file using the saver's saveFile method
+        $this->saver->saveFile('content', $relativePath);
 
-        $this->assertTrue($this->saver->fileExists($absolutePath));
+        $this->assertTrue($this->saver->fileExists($relativePath));
     }
 
 
@@ -256,11 +257,15 @@ class FilesystemSaverTest extends TestCase
 
     public function testDeleteFileWithAbsolutePath(): void
     {
-        $absolutePath = $this->testDir . '/absolute_test.txt';
-        file_put_contents($absolutePath, 'content');
+        $relativePath = 'absolute_delete_test.txt';
 
-        $this->assertTrue($this->saver->deleteFile($absolutePath));
-        $this->assertFalse(file_exists($absolutePath));
+        // Create the file first
+        $this->saver->saveFile('content', $relativePath);
+        $this->assertTrue($this->saver->fileExists($relativePath));
+
+        // Delete the file
+        $this->assertTrue($this->saver->deleteFile($relativePath));
+        $this->assertFalse($this->saver->fileExists($relativePath));
     }
 
 
@@ -284,32 +289,28 @@ class FilesystemSaverTest extends TestCase
 
     public function testResolvePathAbsolute(): void
     {
-        // Test with absolute path (should be used as-is)
+        // Test that absolute paths are rejected for security
         $absolutePath = sys_get_temp_dir() . '/absolute_test.txt';
 
-        $this->saver->saveFile('content', $absolutePath);
-        $this->assertTrue(file_exists($absolutePath));
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Absolute paths are not allowed for security reasons');
 
-        // Clean up
-        if (file_exists($absolutePath)) {
-            unlink($absolutePath);
-        }
+        $this->saver->saveFile('content', $absolutePath);
     }
 
 
     public function testResolvePathWindowsAbsolute(): void
     {
-        // Test Windows-style absolute path (C:\path)
+        // Test Windows-style absolute path (C:\path) - should be rejected for security
         if (PHP_OS_FAMILY === 'Windows') {
             $windowsPath = 'C:\\temp\\windows_test.txt';
 
-            $this->saver->saveFile('content', $windowsPath);
-            $this->assertTrue(file_exists($windowsPath));
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessage('Absolute paths are not allowed for security reasons');
 
-            // Clean up
-            if (file_exists($windowsPath)) {
-                unlink($windowsPath);
-            }
+            $this->saver->saveFile('content', $windowsPath);
+        } else {
+            $this->markTestSkipped('Windows-specific test');
         }
     }
 

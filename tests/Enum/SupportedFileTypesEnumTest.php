@@ -60,7 +60,7 @@ class SupportedFileTypesEnumTest extends TestCase
         $this->assertSame('pdf', SupportedFileTypesEnum::PDF_STANDARD->getExtension());
         $this->assertSame('x-pdf', SupportedFileTypesEnum::PDF_X_PDF->getExtension());
         $this->assertSame('acrobat', SupportedFileTypesEnum::PDF_ACROBAT->getExtension());
-        $this->assertSame('vnd.pdf', SupportedFileTypesEnum::PDF_VND_PDF->getExtension());
+        $this->assertSame('vnd-pdf', SupportedFileTypesEnum::PDF_VND_PDF->getExtension());
     }
 
 

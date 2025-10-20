@@ -68,7 +68,9 @@ class FileUploadIntegrationTest extends TestCase
         file_put_contents($tempFile1, 'Test document content');
 
         $tempFile2 = tempnam(sys_get_temp_dir(), 'upload_test_2');
-        file_put_contents($tempFile2, 'Test CAD content');
+        // Create a simple binary file that would pass MIME validation
+        // DWG files typically start with specific bytes, but for testing we'll create a minimal binary file
+        file_put_contents($tempFile2, "\x00\x00\x00\x00" . 'Test CAD content');
 
         $filesArray1 = [
             'name' => 'document.txt',
@@ -88,8 +90,11 @@ class FileUploadIntegrationTest extends TestCase
 
         try {
             // Test mixed input types (base64 and $_FILES)
-            // Allow document types for this test
+            // Allow all necessary file types for this test
+            $this->service->allowFileType(FileTypeEnum::IMAGE->value);
             $this->service->allowFileType(FileTypeEnum::DOC->value);
+            $this->service->allowFileType(FileTypeEnum::PDF->value);
+            $this->service->allowFileType(FileTypeEnum::CAD->value);
 
             $result = $this->service->save(
                 [$imageDataUri, $filesArray1, $pdfDataUri, $filesArray2],
@@ -100,9 +105,10 @@ class FileUploadIntegrationTest extends TestCase
             // Verify results
             $this->assertTrue($result->hasSuccessfulUploads());
 
-            $this->assertSame(4, $result->successfulCount);
+            $this->assertSame(3, $result->successfulCount); // CAD file should be rejected due to MIME validation
             $this->assertSame(4, $result->totalFiles);
-            $this->assertCount(4, $result->successfulFiles);
+            $this->assertCount(3, $result->successfulFiles);
+            $this->assertCount(1, $result->errors); // CAD file should have an error
 
             // Verify files were actually saved
             foreach ($result->successfulFiles as $savedFile) {
