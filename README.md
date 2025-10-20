@@ -313,7 +313,7 @@ if ($service->isRollbackOnErrorEnabled()) {
 ```php
 use FileUploadService\FileUploadService;
 
-// Default filesystem storage (uses system temp directory)
+// Default filesystem storage (uses script directory)
 $service = new FileUploadService(['image']);
 
 // Custom filesystem storage with specific directory
@@ -473,7 +473,8 @@ The service organizes file types into the following categories (accessible via `
 ## Security Features
 
 ### Path Traversal Protection
-- `FilesystemSaver::resolvePath()` prevents `../` attacks
+- `FilesystemSaver::resolvePath()` prevents `../` attacks in filenames
+- Upload destinations can use legitimate directory navigation (e.g., `../images/`)
 - All paths are validated to stay within `basePath`
 - Absolute paths are rejected for security
 

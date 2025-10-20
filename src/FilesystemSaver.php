@@ -155,40 +155,88 @@ class FilesystemSaver implements FileSaverInterface
             throw new RuntimeException("Absolute paths are not allowed for security reasons");
         }
 
-        // Detect and reject path traversal attempts
-        if (str_contains($targetPath, '..') || str_contains($targetPath, './')) {
-            throw new RuntimeException("Path traversal detected in target path: {$targetPath}");
-        }
+        // Note: Path traversal checks are now handled in convertToRelativePath() where we can
+        // distinguish between legitimate directory navigation (../images/) and malicious filenames
 
-        // Combine base path with target path
-        $resolvedPath = rtrim($this->basePath, '/') . '/' . ltrim($targetPath, '/');
+        // Normalize directory separators to platform-specific separator
+        $targetPath = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $targetPath);
 
-        // Normalize the base path
-        $normalizedBasePath = realpath($this->basePath);
+        // Combine base path with target path using DIRECTORY_SEPARATOR
+        $resolvedPath = rtrim($this->basePath, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . ltrim($targetPath, DIRECTORY_SEPARATOR);
+
+        // Normalize the base path to get the canonical path
+        $normalizedBasePath = $this->getCanonicalPath($this->basePath);
         if ($normalizedBasePath === false) {
             throw new RuntimeException("Base path is invalid: {$this->basePath}");
         }
 
-        // Normalize the resolved path
-        $normalizedPath = realpath(dirname($resolvedPath));
-        if ($normalizedPath === false) {
-            // If the directory doesn't exist yet, use the resolved path as-is
-            // but still validate it's within the base path
-            $normalizedPath = $resolvedPath;
+        // For validation, we need to check if the resolved path is within the base path
+        // We can't use realpath on non-existent paths, so we'll manually build the expected canonical path
+        $resolvedDir = dirname($resolvedPath);
+
+        // Create the directory if it doesn't exist (for validation purposes)
+        if (!is_dir($resolvedDir)) {
+            // Build expected canonical path by combining normalized base with relative components
+            $relativeToBase = str_replace($this->basePath, '', $resolvedDir);
+            $relativeToBase = trim($relativeToBase, DIRECTORY_SEPARATOR);
+            $normalizedResolvedDir = $normalizedBasePath;
+
+            if (!empty($relativeToBase)) {
+                $normalizedResolvedDir .= DIRECTORY_SEPARATOR . $relativeToBase;
+            }
         } else {
-            $normalizedPath = $normalizedPath . '/' . basename($resolvedPath);
+            $normalizedResolvedDir = $this->getCanonicalPath($resolvedDir);
+            if ($normalizedResolvedDir === false) {
+                throw new RuntimeException("Failed to resolve directory path: {$resolvedDir}");
+            }
         }
 
-        // Ensure the resolved path is still within the base path
-        // Normalize path separators for comparison
-        $normalizedPathForComparison = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $normalizedPath);
-        $normalizedBasePathForComparison = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $normalizedBasePath);
+        $normalizedPath = $normalizedResolvedDir . DIRECTORY_SEPARATOR . basename($resolvedPath);
+
+        // Normalize both paths for comparison (convert to lowercase on Windows for case-insensitive comparison)
+        $normalizedPathForComparison = $this->normalizeForComparison($normalizedPath);
+        $normalizedBasePathForComparison = $this->normalizeForComparison($normalizedBasePath);
 
         if (!str_starts_with($normalizedPathForComparison, $normalizedBasePathForComparison)) {
             throw new RuntimeException("Resolved path escapes base directory: {$targetPath}");
         }
 
         return $normalizedPath;
+    }
+
+
+    /**
+     * Get canonical path
+     * On Windows, both paths will have the same format (short or long) from realpath()
+     * so they'll be consistent for comparison
+     *
+     * @param string $path Path to canonicalize
+     * @return string|false Canonical path or false on failure
+     */
+    private function getCanonicalPath(string $path): string|false
+    {
+        return realpath($path);
+    }
+
+
+    /**
+     * Normalize path for comparison (handle case sensitivity on Windows)
+     *
+     * @param string $path Path to normalize
+     * @return string Normalized path
+     */
+    private function normalizeForComparison(string $path): string
+    {
+        // Normalize directory separators
+        $normalized = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $path);
+
+        // On Windows, paths are case-insensitive
+        if (DIRECTORY_SEPARATOR === '\\') {
+            $normalized = strtolower($normalized);
+        }
+
+        // Ensure trailing separator for consistent comparison
+        return rtrim($normalized, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
     }
 
 
@@ -227,6 +275,11 @@ class FilesystemSaver implements FileSaverInterface
      */
     public function convertToRelativePath(string $uploadDestination, string $filename): string
     {
+        // Validate filename for path traversal attacks (this is where the real security risk is)
+        if (str_contains($filename, '..') || str_contains($filename, './')) {
+            throw new RuntimeException("Path traversal detected in filename: {$filename}");
+        }
+
         // If uploadDestination is empty, just return the filename
         if (empty($uploadDestination)) {
             return $filename;
@@ -249,7 +302,7 @@ class FilesystemSaver implements FileSaverInterface
             return empty($relativeDir) ? $filename : $relativeDir . DIRECTORY_SEPARATOR . $filename;
         }
 
-        // If uploadDestination is already relative, use it as-is
+        // If uploadDestination is relative, allow it (including ../ for legitimate directory navigation)
         return ltrim($uploadDestination, '/') . '/' . $filename;
     }
 
@@ -263,9 +316,26 @@ class FilesystemSaver implements FileSaverInterface
      */
     public function ensureUploadDestinationExists(string $uploadDestination): void
     {
-        // Normalize to a full filesystem path under basePath
-        $relative = ltrim($uploadDestination, '/\\');
-        $fullDir = rtrim($this->basePath, '/\\') . DIRECTORY_SEPARATOR . $relative;
+        // Check if it's already an absolute path within our base path
+        $isAbsolute = str_starts_with($uploadDestination, '/') || preg_match('/^[A-Za-z]:/', $uploadDestination);
+
+        if ($isAbsolute) {
+            // Normalize path separators
+            $normalizedUploadDest = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $uploadDestination);
+            $normalizedBasePath = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $this->basePath);
+
+            // Check if it's within the base path
+            if (str_starts_with($normalizedUploadDest, $normalizedBasePath)) {
+                // It's already a full path within base - use it directly
+                $fullDir = $normalizedUploadDest;
+            } else {
+                throw new RuntimeException("Upload destination '{$uploadDestination}' is outside the allowed base path '{$this->basePath}'");
+            }
+        } else {
+            // It's relative - combine with base path
+            $relative = ltrim($uploadDestination, '/\\');
+            $fullDir = rtrim($this->basePath, '/\\') . DIRECTORY_SEPARATOR . $relative;
+        }
 
         // For filesystem, ensure the directory exists and is writable
         if (!is_dir($fullDir)) {

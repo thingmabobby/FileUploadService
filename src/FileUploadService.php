@@ -126,7 +126,8 @@ class FileUploadService
         $this->collisionResolver = new FileCollisionResolver($this->validator, $finalCollisionStrategy);
 
         // Create default filesystem saver if none provided
-        $fileSaver = $this->fileSaver ?? new FilesystemSaver(sys_get_temp_dir(), $this->directoryPermissions, $this->createDirectory);
+        // Use script directory as default for predictable, script-relative file saving
+        $fileSaver = $this->fileSaver ?? new FilesystemSaver(__DIR__, $this->directoryPermissions, $this->createDirectory);
         $this->fileUploadSave = new FileUploadSave($this->validator, $fileSaver, $this->convertHeicToJpg);
     }
 

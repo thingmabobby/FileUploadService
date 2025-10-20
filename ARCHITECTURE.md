@@ -143,7 +143,8 @@ if ($this->isFileUploadArray($input)) {
 ## Security Features
 
 ### Path Traversal Protection
-- `FilesystemSaver::resolvePath()` prevents `../` attacks
+- `FilesystemSaver::resolvePath()` prevents `../` attacks in filenames
+- Upload destinations can use legitimate directory navigation (e.g., `../images/`)
 - All paths are validated to stay within `basePath`
 
 ### Filename Sanitization
