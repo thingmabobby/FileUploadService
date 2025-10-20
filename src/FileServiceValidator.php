@@ -805,20 +805,23 @@ class FileServiceValidator
                     }
                 }
                 
-                // Check if detected MIME type matches expected MIME type for extension
-                $expectedMimeType = $this->getMimeTypeForExtension($extension);
-                if ($expectedMimeType && $detectedMimeType !== $expectedMimeType) {
-                    return false; // MIME type mismatch
-                }
-
                 // Check if detected MIME type is in allowed MIME types
                 if (in_array($detectedMimeType, $allowedMimeTypes, true)) {
                     return true;
                 }
+                
+                // For strict MIME type matching: if detected MIME doesn't match expected AND it's not in allowed types,
+                // we still want to fall through to extension validation instead of hard rejecting
+                // This is important for files like DWG/CAD where MIME detection varies across systems
+                $expectedMimeType = $this->getMimeTypeForExtension($extension);
+                if ($expectedMimeType && $detectedMimeType !== $expectedMimeType) {
+                    // Don't return false here - allow extension validation to proceed
+                    // This handles cases where MIME detection is unreliable (e.g., CAD files on Windows)
+                }
             }
         }
 
-        // Step 2: Extension validation
+        // Step 2: Extension validation (fallback when MIME type is unavailable or unreliable)
         if (in_array($extension, $allowedExtensions, true)) {
             return true;
         }
