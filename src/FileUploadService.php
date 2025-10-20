@@ -470,6 +470,7 @@ class FileUploadService
         
         // Process all inputs using the unified method
         // This handles the complexity of different $_FILES structures internally
+        /** @var array<string|array<string, mixed>> $input */
         return $this->saveFromInput($input, $uploadDestination, $filenames, $overwriteExisting, $generateUniqueFilenames);
     }
 

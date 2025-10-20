@@ -95,7 +95,10 @@ class FileUploadSave
             ];
         }
 
+        /** @var string $processedFilePath */
         $processedFilePath = $fileDTO->tmpPath;
+        
+        /** @var string $finalFilename */
         $finalFilename = $fileDTO->filename;
 
         // Optionally convert HEIC/HEIF in tmp and derive final filename accordingly
@@ -236,8 +239,8 @@ class FileUploadSave
      * Handle HEIC/HEIF conversion
      *
      * @param string $filePath Path to the uploaded file
-     * @param string $extension File extension
-     * @return string Path to the file (converted to temporary JPG if HEIC/HEIF)
+     * @param string $originalFilename Original filename (from FileUploadDTO)
+     * @return array{path: string, filename: string} Path to the converted JPEG file (temporary) and its final filename
      */
     private function handleHeicConversion(string $filePath, string $originalFilename): array
     {
