@@ -17,9 +17,12 @@ A comprehensive PHP service for handling file uploads from base64 encoded data U
 - **Separate DTOs**: Specialized data transfer objects for different input types
 - **Cross-Platform**: Full Windows, Linux, and macOS compatibility with proper path handling
 
-## Requirements
+## Minimum Requirements
 
 - PHP 8.1 or higher
+
+## Suggested Requirements
+- `ext-fileinfo` for MIME type validation to work
 - `maestroerror/php-heic-to-jpg` for HEIC/HEIF conversion
 
 ## Installation
