@@ -48,37 +48,22 @@ class DefaultBehaviorTest extends TestCase
     }
 
     /**
-     * Test that default FilesystemSaver uses __DIR__ as basePath
+     * Test that FilesystemSaver is created from uploadDestination
      */
-    public function testDefaultFilesystemSaverUsesScriptDirectory(): void
+    public function testFilesystemSaverCreatedFromUploadDestination(): void
     {
-        // Create service without explicit FilesystemSaver
-        $service = new FileUploadService(['all']);
-
-        // Use reflection to access the private fileUploadSave property
-        $reflection = new \ReflectionClass($service);
-        $saveProperty = $reflection->getProperty('fileUploadSave');
-        $saveProperty->setAccessible(true);
-        $fileUploadSave = $saveProperty->getValue($service);
-
-        // Get the fileSaver from fileUploadSave
-        $saverReflection = new \ReflectionClass($fileUploadSave);
-        $saverMethod = $saverReflection->getMethod('getFileSaver');
-        $saverMethod->setAccessible(true);
-        $fileSaver = $saverMethod->invoke($fileUploadSave);
-
-        // Check that it's a FilesystemSaver
+        // Test with absolute path
+        $absolutePath = $this->testDir . '/uploads';
+        $fileSaver = FilesystemSaver::fromUploadDestination($absolutePath);
+        
         $this->assertInstanceOf(FilesystemSaver::class, $fileSaver);
-
-        // Check the basePath
-        $basePath = $fileSaver->getBasePath();
+        $this->assertEquals($this->testDir, $fileSaver->getBasePath());
         
-        // Should NOT be sys_get_temp_dir()
-        $this->assertNotEquals(sys_get_temp_dir(), $basePath);
+        // Test with relative path
+        $fileSaver2 = FilesystemSaver::fromUploadDestination('uploads');
+        $expectedPath = getcwd() ?: sys_get_temp_dir();
         
-        // Should contain the vendor directory structure
-        $this->assertStringContainsString('file-upload-service', $basePath);
-        $this->assertStringContainsString('src', $basePath);
+        $this->assertEquals($expectedPath, $fileSaver2->getBasePath());
     }
 
     /**

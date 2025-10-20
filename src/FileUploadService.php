@@ -124,11 +124,12 @@ class FileUploadService
             : $this->deriveCollisionStrategyValue($this->collisionStrategy);
 
         $this->collisionResolver = new FileCollisionResolver($this->validator, $finalCollisionStrategy);
-
-        // Create default filesystem saver if none provided
-        // Use script directory as default for predictable, script-relative file saving
-        $fileSaver = $this->fileSaver ?? new FilesystemSaver(__DIR__, $this->directoryPermissions, $this->createDirectory);
-        $this->fileUploadSave = new FileUploadSave($this->validator, $fileSaver, $this->convertHeicToJpg);
+        
+        // If fileSaver provided in constructor, create FileUploadSave now (backward compatibility)
+        // Otherwise, it will be created lazily in save() method from uploadDestination
+        if ($this->fileSaver !== null) {
+            $this->fileUploadSave = new FileUploadSave($this->validator, $this->fileSaver, $this->convertHeicToJpg);
+        }
     }
 
 
@@ -453,6 +454,8 @@ class FileUploadService
      * @param string $uploadDestination The destination to save files to (directory, bucket/key prefix, etc.)
      * @param array<string> $filenames Array of filenames corresponding to each input
      * @param bool $overwriteExisting Whether to overwrite existing files (default: false)
+     * @param bool $generateUniqueFilenames Whether to generate unique filenames to avoid collisions (default: false)
+     * @param FileSaverInterface|null $fileSaver Optional file saver. If not provided, creates FilesystemSaver from uploadDestination
      * @return FileUploadResult Detailed result with successful uploads and errors
      * @throws RuntimeException If upload destination cannot be created or is not writable
      */
@@ -461,8 +464,24 @@ class FileUploadService
         string $uploadDestination,
         array $filenames,
         bool $overwriteExisting = false,
-        bool $generateUniqueFilenames = false
+        bool $generateUniqueFilenames = false,
+        ?FileSaverInterface $fileSaver = null
     ): FileUploadResult {
+        // Lazy-load FilesystemSaver if not already set
+        if (!isset($this->fileUploadSave)) {
+            // Create FilesystemSaver from uploadDestination or use provided one
+            $autoFileSaver = $fileSaver ?? FilesystemSaver::fromUploadDestination(
+                $uploadDestination, 
+                $this->directoryPermissions, 
+                $this->createDirectory
+            );
+            
+            $this->fileUploadSave = new FileUploadSave($this->validator, $autoFileSaver, $this->convertHeicToJpg);
+        } elseif ($fileSaver !== null) {
+            // Override with provided fileSaver for this operation
+            $this->fileUploadSave = new FileUploadSave($this->validator, $fileSaver, $this->convertHeicToJpg);
+        }
+        
         // Smart detection: If $input itself is a multi-file upload array (e.g., $_FILES['pictures']),
         // wrap it so it's treated as a single input rather than iterating over its keys
         if ($this->isMultiFileUploadArray($input)) {

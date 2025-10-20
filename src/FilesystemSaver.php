@@ -366,4 +366,31 @@ class FilesystemSaver implements FileSaverInterface
     {
         return $this->convertToRelativePath($uploadDestination, $filename);
     }
+
+    
+    /**
+     * Create FilesystemSaver from upload destination
+     * Automatically derives basePath from the uploadDestination
+     *
+     * @param string $uploadDestination The upload destination path
+     * @param int $directoryPermissions Directory permissions (default: 0775)
+     * @param bool $createDirectory Whether to create directory if it doesn't exist (default: true)
+     * @return self
+     */
+    public static function fromUploadDestination(
+        string $uploadDestination,
+        int $directoryPermissions = 0775,
+        bool $createDirectory = true
+    ): self {
+        // Derive basePath from uploadDestination
+        if (str_starts_with($uploadDestination, '/') || preg_match('/^[A-Za-z]:/', $uploadDestination)) {
+            // Absolute path - use its directory as base
+            $basePath = dirname($uploadDestination);
+        } else {
+            // Relative path - use current working directory as base
+            $basePath = getcwd() ?: sys_get_temp_dir();
+        }
+        
+        return new self($basePath, $directoryPermissions, $createDirectory);
+    }
 }

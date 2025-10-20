@@ -27,7 +27,6 @@ The FileUploadService library provides a secure, type-safe way to handle file up
 ```php
 $service = new FileUploadService(
     allowedFileTypes: ['image', 'pdf'],
-    fileSaver: new FilesystemSaver('/uploads'),
     convertHeicToJpg: true
 );
 ```
@@ -36,20 +35,25 @@ $service = new FileUploadService(
 - `FileUploadService::__construct()` is called
 - `FileServiceValidator` instance is created
 - `FileCollisionResolver` is initialized with collision strategy
-- `FileUploadSave` instance is created with validator and file saver
 - Allowed file types are parsed and categorized
+- `FileUploadSave` is NOT created yet (lazy-loaded in save() method)
+- If `fileSaver` provided in constructor, `FileUploadSave` is created immediately (backward compatibility)
 
 ### 2. File Upload Request
 ```php
 $result = $service->save(
     input: [$_FILES['file'], 'data:image/jpeg;base64,/9j/4AAQ...'],
-    uploadDir: 'documents',
+    uploadDestination: '/var/www/documents',
     filenames: ['contract.pdf', 'signature.jpg']
 );
 ```
 
 **What happens:**
 - `FileUploadService::save()` is called
+- If `fileUploadSave` not initialized, creates `FilesystemSaver` from `uploadDestination`:
+  - Absolute path: `basePath = dirname(uploadDestination)`
+  - Relative path: `basePath = getcwd()`
+- Creates `FileUploadSave` with the FileSaver
 - Delegates to `FileUploadService::saveFromInput()`
 
 ### 3. Input Processing & Normalization
@@ -183,6 +187,9 @@ if ($this->isFileUploadArray($input)) {
 - Path traversal protection
 - Atomic file operations
 - Configurable directory permissions
+- **Auto-configuration**: `FilesystemSaver::fromUploadDestination()` derives basePath automatically
+  - Absolute uploadDestination: basePath = dirname(uploadDestination)
+  - Relative uploadDestination: basePath = getcwd()
 
 ### CloudStorageSaver (Example)
 - Demonstrates cloud storage integration

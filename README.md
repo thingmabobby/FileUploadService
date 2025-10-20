@@ -33,40 +33,48 @@ composer require thingmabobby/file-upload-service
 ```php
 use FileUploadService\FileUploadService;
 
-// Define allowed file types
-$allowedFileTypes = ['image', 'pdf', 'video'];
-
-// Define input data (can be $_FILES array or base64 data URIs)
-$input = $_FILES['files']; // or ['data:image/jpeg;base64,/9j/4AAQ...', 'data:application/pdf;base64,JVBERi0x...']
-
-// Define upload destination (directory, bucket/key prefix, etc.)
-$uploadDestination = 'uploads';
-
-// Define filenames for each input
-$filenames = ['photo1.jpg', 'document1.pdf'];
-
-// Create service with simple string-based configuration
-$fileUploadService = new FileUploadService($allowedFileTypes);
+// Simple usage - FilesystemSaver auto-configured from uploadDestination
+$service = new FileUploadService(['image', 'pdf']);
 
 try {
-    // Upload files
-    $result = $fileUploadService->save($input, $uploadDestination, $filenames);
+    $result = $service->save(
+        input: $_FILES['files'],
+        uploadDestination: __DIR__ . '/uploads',  // Absolute path - basePath derived automatically!
+        filenames: ['photo.jpg', 'document.pdf']
+    );
 
-    // Check results
     if ($result->hasSuccessfulUploads()) {
-        echo "Uploaded " . $result->successfulCount . " files";
+        echo "Uploaded " . $result->successfulCount . " files\n";
         foreach ($result->successfulFiles as $filePath) {
             echo "Saved: " . $filePath . "\n";
         }
-    } else {
+    }
+    
+    if ($result->hasErrors()) {
         foreach ($result->getErrorMessages() as $errorMessage) {
             echo "Error: " . $errorMessage . "\n";
         }
     }
 } catch (RuntimeException $e) {
-    // Handle critical errors (directory creation, filename mismatches, etc.)
     echo "Critical error: " . $e->getMessage() . "\n";
 }
+```
+
+### Traditional Usage (Backward Compatible)
+
+```php
+use FileUploadService\FileUploadService;
+use FileUploadService\FilesystemSaver;
+
+// Configure FilesystemSaver explicitly
+$fileSaver = new FilesystemSaver('/var/www/uploads', 0755, true);
+$service = new FileUploadService(['image', 'pdf'], $fileSaver);
+
+$result = $service->save(
+    input: $_FILES['files'],
+    uploadDestination: 'photos',  // Relative to basePath
+    filenames: ['photo1.jpg', 'photo2.jpg']
+);
 ```
 
 ## Custom MIME Type Support
@@ -313,10 +321,12 @@ if ($service->isRollbackOnErrorEnabled()) {
 ```php
 use FileUploadService\FileUploadService;
 
-// Default filesystem storage (uses script directory)
+// Simple approach: FilesystemSaver is auto-created from uploadDestination
 $service = new FileUploadService(['image']);
+$result = $service->save($_FILES['image'], '/var/www/uploads', ['photo.jpg']);
+// Automatically creates FilesystemSaver with basePath derived from uploadDestination
 
-// Custom filesystem storage with specific directory
+// Advanced: Provide FilesystemSaver in constructor (backward compatible)
 use FileUploadService\FilesystemSaver;
 $filesystemSaver = new FilesystemSaver('/var/uploads', 0755, true);
 $service = new FileUploadService(
@@ -324,9 +334,18 @@ $service = new FileUploadService(
     fileSaver: $filesystemSaver
 );
 
+// Advanced: Provide FileSaverInterface per save() call
+$result = $service->save(
+    input: $_FILES['image'],
+    uploadDestination: 'uploads',
+    filenames: ['photo.jpg'],
+    fileSaver: $customFileSaver  // Optional override
+);
+
 // Cloud storage example (implement FileSaverInterface)
 // $cloudSaver = new CloudStorageSaver('bucket-name', 'region', 'credentials');
-// $service = new FileUploadService(['image'], $cloudSaver);
+// $service = new FileUploadService(['image']);
+// $result = $service->save($input, 'uploads', $filenames, fileSaver: $cloudSaver);
 ```
 
 ## Input Types
@@ -521,7 +540,7 @@ public function __construct(
 #### Public Methods
 
 **File Management:**
-- `save(array $inputs, string $uploadDestination, array $filenames, bool $overwriteExisting = false, bool $generateUniqueFilenames = false): FileUploadResult`
+- `save(array $inputs, string $uploadDestination, array $filenames, bool $overwriteExisting = false, bool $generateUniqueFilenames = false, ?FileSaverInterface $fileSaver = null): FileUploadResult`
 
 **Configuration:**
 - `setAllowedFileTypes(array $allowedFileTypes): void`
