@@ -794,6 +794,17 @@ class FileServiceValidator
         if ($filePath) {
             $detectedMimeType = $this->getDetectedMimeType($filePath);
             if ($detectedMimeType) {
+                // Special case: HEIC/HEIF files with jpg extension (will be converted)
+                // Allow HEIC files to pass validation even with wrong/missing extension if images are allowed
+                if (in_array($detectedMimeType, ['image/heic', 'image/heif'], true)) {
+                    // Check if any image MIME types are allowed
+                    foreach ($allowedMimeTypes as $allowedMime) {
+                        if (str_starts_with($allowedMime, 'image/')) {
+                            return true; // HEIC is an image type, will be converted to JPG
+                        }
+                    }
+                }
+                
                 // Check if detected MIME type matches expected MIME type for extension
                 $expectedMimeType = $this->getMimeTypeForExtension($extension);
                 if ($expectedMimeType && $detectedMimeType !== $expectedMimeType) {

@@ -104,11 +104,14 @@ if ($this->isFileUploadArray($input)) {
 **Method:** `FileUploadSave::handleHeicConversion()`
 
 **What happens:**
-- Checks if file extension is `heic` or `heif`
-- If conversion is enabled, calls `FileUploadSave::convertHeicToJpg()`
+- Detects HEIC/HEIF content using `isHeicContent()` with three-tier detection:
+  1. **Primary**: Checks MIME type from DTO (from browser/client)
+  2. **Fallback**: Uses finfo() to detect MIME type from file content
+  3. **Last resort**: Reads binary header for HEIC brand markers (ftypheic, ftypheif, ftypmif1)
+- If conversion is enabled and HEIC content is detected, calls `FileUploadSave::convertHeicToJpg()`
 - Uses `Maestroerror\HeicToJpg` library to convert HEIC to JPG
-- Updates filename from `.heic` to `.jpg`
-- Deletes original HEIC file after successful conversion
+- Returns both converted file path and updated filename with `.jpg` extension
+- Original HEIC temp file is cleaned up after successful conversion
 
 ### 6. File Saving Process
 **Method:** `FileSaverInterface::saveFile()`

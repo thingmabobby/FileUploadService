@@ -11,6 +11,7 @@ use FileUploadService\DTO\DataUriDTO;
 use FileUploadService\Enum\FileTypeEnum;
 use FileUploadService\Enum\UploadErrorCodeEnum;
 use RuntimeException;
+use Exception;
 
 /**
  * Service for handling file saving operations
@@ -27,6 +28,7 @@ class FileUploadSave
      */
     private array $tempFilesToCleanup = [];
 
+    
     /**
      * Constructor
      *
@@ -39,6 +41,7 @@ class FileUploadSave
         private readonly FileSaverInterface $fileSaver,
         private readonly bool $convertHeicToJpg = true
     ) {}
+
 
     /**
      * Destructor - clean up any remaining temp files
@@ -92,14 +95,14 @@ class FileUploadSave
             ];
         }
 
-        // Handle HEIC/HEIF conversion in the temp directory if needed
-        $processedFilePath = $this->handleHeicConversion($fileDTO->tmpPath, $fileDTO->extension, $fileDTO->filename);
-
-        // Update filename if it was converted (HEIC -> JPG)
+        $processedFilePath = $fileDTO->tmpPath;
         $finalFilename = $fileDTO->filename;
-        if ($processedFilePath !== $fileDTO->tmpPath) {
-            // File was converted, update the filename to .jpg
-            $finalFilename = pathinfo($fileDTO->filename, PATHINFO_FILENAME) . '.jpg';
+
+        // Optionally convert HEIC/HEIF in tmp and derive final filename accordingly
+        if ($this->convertHeicToJpg && $this->isHeicContent($fileDTO->tmpPath, $fileDTO->mimeType)) {
+            $conversion = $this->handleHeicConversion($fileDTO->tmpPath, $fileDTO->filename);
+            $processedFilePath = $conversion['path'];
+            $finalFilename = $conversion['filename'];
         }
 
         // Move processed file using the file saver
@@ -234,35 +237,70 @@ class FileUploadSave
      *
      * @param string $filePath Path to the uploaded file
      * @param string $extension File extension
-     * @param string $filename Original filename
-     * @return string Path to the file (converted if HEIC/HEIF)
+     * @return string Path to the file (converted to temporary JPG if HEIC/HEIF)
      */
-    private function handleHeicConversion(string $filePath, string $extension, string $filename): string
+    private function handleHeicConversion(string $filePath, string $originalFilename): array
     {
-        // If not a HEIC/HEIF file, return the original path
-        if (!in_array($extension, ['heic', 'heif'])) {
-            return $filePath;
+        // Detect HEIC/HEIF by content
+        if (!$this->isHeicContent($filePath)) {
+            return ['path' => $filePath, 'filename' => $originalFilename];
         }
 
         // If HEIC conversion is disabled, return the original path
         if (!$this->convertHeicToJpg) {
-            return $filePath;
+            return ['path' => $filePath, 'filename' => $originalFilename];
         }
 
         // Attempt to convert HEIC/HEIF to JPEG
         try {
-            $jpgFilePath = $this->convertHeicToJpg($filePath, $filename);
+            $jpgFilePath = $this->convertHeicToJpg($filePath);
 
-            // Remove the original HEIC file after successful conversion
-            $this->fileSaver->deleteFile($filePath);
+            // swap extension to .jpg for final filename
+            $finalName = pathinfo($originalFilename, PATHINFO_FILENAME) . '.jpg';
 
-            return $jpgFilePath;
+            return ['path' => $jpgFilePath, 'filename' => $finalName];
         } catch (RuntimeException $e) {
-            // Conversion failed - clean up the uploaded HEIC file
-            $this->fileSaver->deleteFile($filePath);
-
             throw new RuntimeException("Failed to convert HEIC to JPEG: " . $e->getMessage());
+        } finally {
+            // Clean up the uploaded HEIC temp file directly
+            unlink($filePath);
         }
+    }
+
+
+    /**
+     * Best-effort HEIC content detection using MIME (finfo) and header brand check
+     */
+    private function isHeicContent(string $filePath, ?string $mime = null): bool
+    {
+        // 1) Trust provided MIME (from DTO) if present
+        if ($mime && ($mime === 'image/heic' || $mime === 'image/heif')) {
+            return true;
+        }
+
+        // 2) Fallback to finfo()
+        if (function_exists('finfo_open')) {
+            $f = finfo_open(\FILEINFO_MIME_TYPE);
+            if ($f) {
+                $detected = finfo_file($f, $filePath) ?: '';
+                finfo_close($f);
+                if ($detected === 'image/heic' || $detected === 'image/heif') {
+                    return true;
+                }
+            }
+        }
+
+        // 3) Last resort: brand header check
+        $h = @fopen($filePath, 'rb');
+        if ($h) {
+            $head = fread($h, 64) ?: '';
+            fclose($h);
+            $l = strtolower($head);
+            if (str_contains($l, 'ftypheic') || str_contains($l, 'ftypheif') || str_contains($l, 'ftypmif1')) {
+                return true;
+            }
+        }
+        return false;
     }
 
 
@@ -270,34 +308,15 @@ class FileUploadSave
      * Convert HEIC/HEIF file to JPEG
      *
      * @param string $heicFilePath Path to the HEIC/HEIF file
-     * @param string $originalFilename Original filename (without extension)
-     * @return string Path to the converted JPEG file
+     * @return string Path to the converted JPEG file (temporary)
      * @throws RuntimeException If conversion fails
      */
-    private function convertHeicToJpg(string $heicFilePath, string $originalFilename): string
+    private function convertHeicToJpg(string $heicFilePath): string
     {
-        // Create a temporary directory for conversion if it doesn't exist
-        $tempDir = sys_get_temp_dir() . '/heic_conversion_' . uniqid();
-        if (!is_dir($tempDir)) {
-            // Use secure permissions (owner read/write/execute only)
-            if (!mkdir($tempDir, 0700, true)) {
-                throw new RuntimeException("Failed to create temporary directory for HEIC conversion");
-            }
-        }
-
         // Check if HEIC conversion is available
         if (!$this->isHeicConversionAvailable()) {
-            // Graceful degradation: save HEIC file as-is if conversion library is not available
-            $baseFilename = pathinfo($originalFilename, PATHINFO_FILENAME);
-            $heicFilename = $baseFilename . '.heic';
-
-            // Copy the original HEIC file to the destination
-            $fileContent = file_get_contents($heicFilePath);
-            if ($fileContent !== false) {
-                $this->fileSaver->saveFile($fileContent, $heicFilename, true);
-            }
-
-            return $heicFilename;
+            // Conversion library not available - throw exception
+            throw new RuntimeException("HEIC conversion library (maestroerror/php-heic-to-jpg) is not installed");
         }
 
         try {
@@ -305,90 +324,24 @@ class FileUploadSave
             $converter = new \Maestroerror\HeicToJpg();
             $convertedImageData = $converter->convertImage($heicFilePath)->get();
 
-            // Generate unique filename for the converted JPEG
-            $baseFilename = pathinfo($originalFilename, PATHINFO_FILENAME);
-            $jpgFilename = $baseFilename . '.jpg';
-
-            // Save the converted image using the file saver
-            $this->fileSaver->saveFile($convertedImageData, $jpgFilename, true);
-
-            // Clean up temporary directory
-            $this->cleanupTempDirectory($tempDir);
-
-            return $jpgFilename;
-        } catch (RuntimeException) {
-            // Clean up temporary directory on failure
-            $this->cleanupTempDirectory($tempDir);
-
-            // If conversion fails, gracefully degrade to saving the original HEIC file
-            $baseFilename = pathinfo($originalFilename, PATHINFO_FILENAME);
-            $heicFilename = $baseFilename . '.heic';
-
-            // Copy the original HEIC file to the destination
-            $fileContent = file_get_contents($heicFilePath);
-            if ($fileContent !== false) {
-                $this->fileSaver->saveFile($fileContent, $heicFilename, true);
+            // Validate that we got image data (raw JPEG binary)
+            if (empty($convertedImageData)) {
+                throw new RuntimeException("HEIC conversion returned empty data");
             }
 
-            return $heicFilename;
-        } finally {
-            // Clean up temporary directory
-            if (is_dir($tempDir)) {
-                $this->removeDirectory($tempDir);
+            // Write directly to a temp file under system tmp
+            $jpgTempPath = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'heic_' . uniqid('', true) . '.jpg';
+            if (file_put_contents($jpgTempPath, $convertedImageData, LOCK_EX) === false) {
+                throw new RuntimeException("Failed to write converted JPEG to temporary file");
             }
+
+            return $jpgTempPath;
+        } catch (Exception $e) {
+            // Re-throw with more context
+            throw new RuntimeException("HEIC to JPG conversion failed: " . $e->getMessage(), 0, $e);
         }
     }
-
-
-    /**
-     * Recursively remove a directory and its contents
-     *
-     * @param string $dir Directory path
-     */
-    private function removeDirectory(string $dir): void
-    {
-        if (!is_dir($dir)) {
-            return;
-        }
-
-        $files = array_diff(scandir($dir), ['.', '..']);
-        foreach ($files as $file) {
-            $path = $dir . '/' . $file;
-            if (is_dir($path)) {
-                $this->removeDirectory($path);
-            } else {
-                unlink($path);
-            }
-        }
-        rmdir($dir);
-    }
-
-
-    /**
-     * Clean up temporary directory and its contents
-     *
-     * @param string $tempDir Path to temporary directory
-     */
-    private function cleanupTempDirectory(string $tempDir): void
-    {
-        if (!is_dir($tempDir)) {
-            return;
-        }
-
-        // Remove all files in the directory
-        $files = glob($tempDir . '/*');
-        if ($files !== false) {
-            foreach ($files as $file) {
-                if (is_file($file)) {
-                    unlink($file);
-                }
-            }
-        }
-
-        // Remove the directory itself
-        rmdir($tempDir);
-    }
-
+    
 
     /**
      * Extract base64 data from data URI
@@ -424,6 +377,7 @@ class FileUploadSave
         }
     }
 
+
     /**
      * Clean up all tracked temp files
      */
@@ -436,6 +390,7 @@ class FileUploadSave
         }
         $this->tempFilesToCleanup = [];
     }
+
 
     /**
      * Get the file saver instance

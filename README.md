@@ -236,7 +236,9 @@ if ($service->isHeicConversionEnabled()) {
 ```
 
 **HEIC Conversion Behavior:**
-- **Default behavior**: HEIC/HEIF files are automatically converted to JPEG format
+- **Default behavior**: HEIC/HEIF files are automatically detected via MIME type and converted to JPEG format
+- **Detection method**: Uses MIME type from uploaded file (primary), finfo() detection (fallback), and binary header checks (last resort)
+- **Extension-agnostic**: Files are detected by content, not file extension, preventing misidentification
 - **Conversion fails**: Falls back to saving the original HEIC/HEIF file
 - **Always graceful**: Never fails uploads due to conversion issues
 - **Library dependency**: Uses `maestroerror/php-heic-to-jpg` package (required dependency)

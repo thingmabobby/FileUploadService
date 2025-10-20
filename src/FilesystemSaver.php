@@ -58,22 +58,28 @@ class FilesystemSaver implements FileSaverInterface
     {
         // Try move_uploaded_file first (for actual uploaded files)
         if (!move_uploaded_file($sourcePath, $targetPath)) {
-            // Fallback for testing: if move_uploaded_file fails, try atomic copy
-            // This happens when the file wasn't uploaded via HTTP POST (e.g., in tests)
+            // Fallback: if move_uploaded_file fails, try binary-safe copy
+            // This happens when the file wasn't uploaded via HTTP POST (e.g., temp converted files)
             $tempPath = $targetPath . '.tmp.' . uniqid();
-            if (!copy($sourcePath, $tempPath)) {
-                throw new RuntimeException("Failed to copy uploaded file from {$sourcePath} to {$tempPath}");
+            
+            // Use binary-safe file operations to preserve image data
+            $sourceContent = file_get_contents($sourcePath);
+            if ($sourceContent === false) {
+                throw new RuntimeException("Failed to read source file: {$sourcePath}");
+            }
+            
+            if (file_put_contents($tempPath, $sourceContent, LOCK_EX) === false) {
+                throw new RuntimeException("Failed to write to temporary file: {$tempPath}");
             }
 
             // Atomically move the temporary file to the final location
             if (!rename($tempPath, $targetPath)) {
                 // Clean up temp file if rename fails
                 unlink($tempPath);
-                throw new RuntimeException("Failed to move uploaded file from {$sourcePath} to {$targetPath}");
+                throw new RuntimeException("Failed to move file from {$sourcePath} to {$targetPath}");
             }
 
             // Clean up the source file after successful atomic move
-            // This handles the case where move_uploaded_file() failed (e.g., in tests)
             unlink($sourcePath);
         }
     }
@@ -257,25 +263,23 @@ class FilesystemSaver implements FileSaverInterface
      */
     public function ensureUploadDestinationExists(string $uploadDestination): void
     {
-        // If upload destination is empty, use base path
-        if (empty($uploadDestination)) {
-            $uploadDestination = $this->basePath;
-        }
+        // Normalize to a full filesystem path under basePath
+        $relative = ltrim($uploadDestination, '/\\');
+        $fullDir = rtrim($this->basePath, '/\\') . DIRECTORY_SEPARATOR . $relative;
 
-        // For filesystem, we need to ensure the directory exists and is writable
-        if (!is_dir($uploadDestination)) {
+        // For filesystem, ensure the directory exists and is writable
+        if (!is_dir($fullDir)) {
             if (!$this->createDirectory) {
-                throw new RuntimeException("Upload directory does not exist: {$uploadDestination}");
+                throw new RuntimeException("Upload directory does not exist: {$fullDir}");
             }
 
-            // Try to create the directory
-            if (!mkdir($uploadDestination, $this->directoryPermissions, true)) {
-                throw new RuntimeException("Failed to create upload destination: {$uploadDestination}");
+            if (!mkdir($fullDir, $this->directoryPermissions, true)) {
+                throw new RuntimeException("Failed to create upload destination: {$fullDir}");
             }
         }
 
-        if (!is_writable($uploadDestination)) {
-            throw new RuntimeException("Upload destination is not writable: {$uploadDestination}");
+        if (!is_writable($fullDir)) {
+            throw new RuntimeException("Upload destination is not writable: {$fullDir}");
         }
     }
 
