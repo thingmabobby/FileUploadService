@@ -462,6 +462,12 @@ class FileUploadService
         bool $overwriteExisting = false,
         bool $generateUniqueFilenames = false
     ): FileUploadResult {
+        // Smart detection: If $input itself is a multi-file upload array (e.g., $_FILES['pictures']),
+        // wrap it so it's treated as a single input rather than iterating over its keys
+        if ($this->isMultiFileUploadArray($input)) {
+            $input = [$input];
+        }
+        
         // Process all inputs using the unified method
         // This handles the complexity of different $_FILES structures internally
         return $this->saveFromInput($input, $uploadDestination, $filenames, $overwriteExisting, $generateUniqueFilenames);
