@@ -890,6 +890,11 @@ class FileServiceValidator
      */
     private function getDetectedMimeType(string $filePath): ?string
     {
+        // Check if fileinfo extension is available (safety guard for Windows/IIS servers)
+        if (!function_exists('finfo_open')) {
+            return null;
+        }
+        
         $finfo = finfo_open(FILEINFO_MIME_TYPE);
         if ($finfo === false) {
             return null;
