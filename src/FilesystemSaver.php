@@ -275,10 +275,7 @@ class FilesystemSaver implements FileSaverInterface
      */
     public function convertToRelativePath(string $uploadDestination, string $filename): string
     {
-        // Validate filename for path traversal attacks (this is where the real security risk is)
-        if (str_contains($filename, '..') || str_contains($filename, './')) {
-            throw new RuntimeException("Path traversal detected in filename: {$filename}");
-        }
+        $filename = FilenameSanitizer::cleanFilename($filename);
 
         // If uploadDestination is empty, just return the filename
         if (empty($uploadDestination)) {

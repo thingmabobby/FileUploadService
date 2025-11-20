@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace FileUploadService;
 
+use FileUploadService\Utils\FilenameSanitizer;
 use RuntimeException;
 
 /**
@@ -76,6 +77,8 @@ class CloudStorageSaver implements FileSaverInterface
      */
     public function resolveTargetPath(string $uploadDestination, string $filename): string
     {
+        $filename = FilenameSanitizer::cleanFilename($filename);
+
         // For cloud storage, we might use bucket/key format
         $key = empty($uploadDestination) ? $filename : $uploadDestination . '/' . $filename;
 
