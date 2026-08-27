@@ -2,7 +2,7 @@
     "name": "thingmabobby/file-upload-service",
     "description": "A comprehensive PHP file upload service supporting base64 data URIs, traditional file uploads, HEIC/HEIF conversion, and multiple file types",
     "type": "library",
-    "license": "Unlicense",
+    "license": "MIT",
     "keywords": [
         "file-upload",
         "base64",

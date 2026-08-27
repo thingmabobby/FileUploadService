@@ -81,6 +81,15 @@ class FileUploadSaveTest extends TestCase
 
             $this->assertTrue($result['success']);
             $this->assertArrayHasKey('filePath', $result);
+            $this->assertArrayHasKey('storedFilename', $result);
+            $this->assertArrayHasKey('extension', $result);
+            $this->assertArrayHasKey('mimeType', $result);
+            $this->assertArrayHasKey('sizeBytes', $result);
+            $this->assertArrayHasKey('wasConverted', $result);
+            $this->assertSame('test.txt', $result['storedFilename']);
+            $this->assertSame('txt', $result['extension']);
+            $this->assertFalse($result['wasConverted']);
+            $this->assertSame(strlen('Test file content'), $result['sizeBytes']);
             $this->assertStringEndsWith('test.txt', $result['filePath']);
 
             // Check if file exists using the fileSaver's method

@@ -6,6 +6,7 @@ namespace FileUploadService;
 
 use FileUploadService\FileUploadResult;
 use FileUploadService\FileUploadError;
+use FileUploadService\FileUploadSuccess;
 use FileUploadService\FileServiceValidator;
 use FileUploadService\FileCollisionResolver;
 use FileUploadService\FileUploadSave;
@@ -45,6 +46,13 @@ class FileUploadService
      * @var array<FileUploadError>
      */
     private array $errors = [];
+
+    /**
+     * Structured successful uploads (for result tracking)
+     *
+     * @var array<FileUploadSuccess>
+     */
+    private array $successfulUploads = [];
 
     /**
      * Allowed file type categories (image, pdf, etc.)
@@ -703,6 +711,7 @@ class FileUploadService
         // Use the processed inputs for the rest of the method
         $inputs = $processedInputs;
         $filenames = $processedFilenames;
+        $requestedFilenames = $processedFilenames;
 
         // Generate unique filenames if requested
         if ($generateUniqueFilenames) {
@@ -713,29 +722,34 @@ class FileUploadService
         $this->savedFilePaths = [];
         $this->errors = [];
         $this->savedFiles = [];
+        $this->successfulUploads = [];
 
         $totalFiles = count($inputs);
 
         // Process each input item individually
         foreach ($inputs as $index => $input) {
             $filename = $filenames[$index];
+            $requestedFilename = $requestedFilenames[$index];
+            $inputIndex = (int) $index;
 
             try {
                 // Create FileUploadDTO based on input type
                 if ($this->isFileUploadArray($input) && is_array($input)) {
+                    $originalFilename = $this->extractRawOriginalFilename($input);
+
                     // Create FileUploadDTO from $_FILES array
                     $fileUploadDTO = FileUploadDTO::fromFilesArray($input, $filename);
 
                     // Process and save from file upload
                     $result = $this->fileUploadSave->processFileUpload($fileUploadDTO, $uploadDestination, $overwriteExisting, $this->allowedFileTypes);
-                    $this->handleSaveResult($result);
+                    $this->handleSaveResult($result, $originalFilename, $requestedFilename, $inputIndex);
                 } elseif (is_string($input)) {
-                    // Create DataUriDTO from base64 data URI
+                    // Data URIs have no intrinsic original filename
                     $dataUriDTO = DataUriDTO::fromDataUri($input, $filename);
 
                     // Process and save from base64 input
                     $result = $this->fileUploadSave->processBase64Input($dataUriDTO, $uploadDestination, $overwriteExisting, $this->allowedFileTypes);
-                    $this->handleSaveResult($result);
+                    $this->handleSaveResult($result, null, $requestedFilename, $inputIndex);
                 }
             } catch (RuntimeException $e) {
                 // If we can't process an item, add it to errors and continue
@@ -748,25 +762,67 @@ class FileUploadService
             successfulFiles: $this->savedFilePaths,
             errors: $this->errors,
             totalFiles: $totalFiles,
-            successfulCount: count($this->savedFilePaths)
+            successfulCount: count($this->savedFilePaths),
+            successfulUploads: $this->successfulUploads
         );
+    }
+
+
+    /**
+     * Extract the raw unsanitized $_FILES['name'] as untrusted provenance metadata.
+     *
+     * @param array<string, mixed> $filesArray
+     */
+    private function extractRawOriginalFilename(array $filesArray): ?string
+    {
+        $name = $filesArray['name'] ?? null;
+
+        return is_string($name) && $name !== '' ? $name : null;
     }
 
 
     /**
      * Handle the result from file save operations
      *
-     * @param array{success: bool, filePath?: string, error?: FileUploadError} $result Result array from FileUploadSave
+     * @param array{
+     *     success: bool,
+     *     filePath?: string,
+     *     storedFilename?: string,
+     *     extension?: string,
+     *     mimeType?: string|null,
+     *     sizeBytes?: int|null,
+     *     wasConverted?: bool,
+     *     error?: FileUploadError
+     * } $result Result array from FileUploadSave
      */
-    private function handleSaveResult(array $result): void
-    {
+    private function handleSaveResult(
+        array $result,
+        ?string $originalFilename,
+        string $requestedFilename,
+        int $inputIndex
+    ): void {
         if ($result['success']) {
-            // Construct full path for FilesystemSaver
+            // Construct full path for FilesystemSaver. storedPath remains an opaque saver identifier
+            // and must not be parsed to recover storedFilename, extension, MIME, or size.
             $filePath = $result['filePath'] ?? '';
             if ($filePath && $this->fileUploadSave->getFileSaver() instanceof FilesystemSaver) {
                 $basePath = $this->fileUploadSave->getFileSaver()->getBasePath();
                 $filePath = rtrim($basePath, '/') . '/' . ltrim($filePath, '/');
             }
+
+            $storedFilename = $result['storedFilename'] ?? '';
+
+            $this->successfulUploads[] = new FileUploadSuccess(
+                originalFilename: $originalFilename,
+                requestedFilename: $requestedFilename,
+                storedFilename: $storedFilename,
+                storedPath: $filePath,
+                extension: $result['extension'] ?? strtolower(pathinfo($storedFilename, PATHINFO_EXTENSION)),
+                mimeType: $result['mimeType'] ?? null,
+                sizeBytes: $result['sizeBytes'] ?? null,
+                wasConverted: $result['wasConverted'] ?? false,
+                inputIndex: $inputIndex,
+            );
 
             $this->savedFilePaths[] = $filePath;
             $this->savedFiles[] = $filePath; // Track for potential rollback
@@ -965,5 +1021,6 @@ class FileUploadService
         $this->cleanupSavedFiles($this->savedFiles);
         $this->savedFiles = [];
         $this->savedFilePaths = [];
+        $this->successfulUploads = [];
     }
 }

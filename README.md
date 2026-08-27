@@ -63,6 +63,32 @@ try {
 }
 ```
 
+### Structured Successful Uploads
+
+`$result->successfulFiles` remains an array of path/identifier strings for backward compatibility.
+
+`$result->successfulUploads` contains `FileUploadSuccess` objects with input provenance and **final processed-file** metadata. Use this when you need original vs requested vs stored names, MIME type, size, or whether HEIC conversion actually produced the stored artifact.
+
+```php
+foreach ($result->successfulUploads as $upload) {
+    echo $upload->originalFilename;
+    echo $upload->requestedFilename;
+    echo $upload->storedFilename;
+    echo $upload->storedPath;
+    echo $upload->mimeType;
+    echo $upload->extension;
+    echo $upload->sizeBytes;
+    echo $upload->wasConverted ? 'converted' : 'original';
+}
+```
+
+**Input vs output fields:**
+- **Input / provenance:** `originalFilename`, `requestedFilename`, `inputIndex`
+- **Output (processed artifact):** `storedFilename`, `extension`, `mimeType`, `sizeBytes`, `wasConverted`
+- **Storage identifier:** `storedPath` — opaque saver return value. Do **not** parse it to recover filename, extension, MIME type, or size. `storedFilename` is the logical processed name and may not appear in `storedPath`.
+
+**`originalFilename` is untrusted provenance metadata.** It intentionally preserves the raw incoming `$_FILES['name']` (or is `null` for base64/data-URI input, which has no intrinsic original filename). It may contain unsafe client-supplied text. Never use it as a filesystem path, stored filename, or `Content-Disposition` value, and never treat it as sanitized output. `storedFilename` is the package-produced logical/sanitized filename for the successfully processed artifact.
+
 ### Traditional Usage (Backward Compatible)
 
 ```php
@@ -254,6 +280,8 @@ if ($service->isHeicConversionEnabled()) {
 - **Conversion fails**: Falls back to saving the original HEIC/HEIF file
 - **Always graceful**: Never fails uploads due to conversion issues
 - **Library dependency**: Uses `maestroerror/php-heic-to-jpg` package (required dependency)
+
+On a successful conversion, `FileUploadSuccess` describes the **JPEG output**: `storedFilename` ends in `.jpg`, `mimeType` is `image/jpeg`, `wasConverted` is `true`, and `originalFilename` still records the incoming name (for example `IMG_1234.HEIC`). `wasConverted` is `true` only when conversion actually produced the stored artifact — not merely because conversion was enabled. Data-URI uploads have `originalFilename === null`.
 
 ### Collision Resolution Strategies
 
@@ -579,7 +607,8 @@ public function __construct(
 ### FileUploadResult
 
 **Properties:**
-- `public readonly array $successfulFiles` - Array of successfully uploaded file paths
+- `public readonly array $successfulFiles` - Array of successfully uploaded file paths / storage identifiers (strings)
+- `public readonly array $successfulUploads` - Array of `FileUploadSuccess` objects for each successful file
 - `public readonly array $errors` - Array of upload errors
 - `public readonly int $totalFiles` - Total number of files attempted
 - `public readonly int $successfulCount` - Number of successfully uploaded files
@@ -601,6 +630,21 @@ public function __construct(
 **Methods:**
 - `getDescription(): string`
 
+### FileUploadSuccess
+
+One successfully processed and saved upload. Filename fields are not aliases.
+
+**Properties:**
+- `public readonly ?string $originalFilename` - Untrusted provenance: raw `$_FILES['name']` when present; `null` for data URIs. May contain unsafe client-supplied text. Never use as a filesystem path, stored filename, or `Content-Disposition` value. Never treat as sanitized output. Exists only to record what the client originally supplied.
+- `public readonly string $requestedFilename` - Caller `filenames[]` value for this slot, before sanitization, collision resolution, and conversion
+- `public readonly string $storedFilename` - Package-produced logical/sanitized final filename after processing. Independent of `storedPath`. This is the appropriate filename metadata for the processed artifact.
+- `public readonly string $storedPath` - Opaque saver-returned storage identifier. May have a completely different basename than `storedFilename`. Do **not** parse this value to recover filename, extension, MIME type, or size.
+- `public readonly string $extension` - Final processed-file extension derived from `storedFilename` (lowercase, no dot)
+- `public readonly ?string $mimeType` - MIME type of the bytes handed to the saver
+- `public readonly ?int $sizeBytes` - Byte length of the file handed to the saver
+- `public readonly bool $wasConverted` - `true` only when the stored artifact is a transformed version of the input (for example a successful HEIC → JPEG conversion)
+- `public readonly int $inputIndex` - 0-based index in the expanded input list
+
 ## Architecture
 
 The service is built with a clean separation of concerns:
@@ -614,6 +658,7 @@ The service is built with a clean separation of concerns:
 - **CloudStorageSaver**: Example cloud storage implementation
 - **Enum Classes**: Type-safe constants and enumerations (FileTypeEnum, CollisionStrategyEnum, UploadErrorCodeEnum, SupportedFileTypesEnum)
 - **DTO Classes**: Specialized data transfer objects (FileUploadDTO, DataUriDTO)
+- **Result objects**: `FileUploadResult`, `FileUploadSuccess`, `FileUploadError`
 - **Utils**: Utility classes (FilenameSanitizer)
 
 ### Storage Backend Interface
@@ -655,4 +700,4 @@ composer test-stop-on-failure
 
 ## License
 
-Unlicense - See LICENSE file for details.
+MIT - See LICENSE file for details.

@@ -11,17 +11,33 @@ namespace FileUploadService;
 class FileUploadResult
 {
     /**
+     * Array of successfully uploaded file paths / storage identifiers
+     *
+     * @var array<string>
+     */
+    public readonly array $successfulFiles;
+
+    /**
      * @param array<string> $successfulFiles Array of successfully uploaded file paths
      * @param array<FileUploadError> $errors Array of upload errors
      * @param int $totalFiles Total number of files attempted
      * @param int $successfulCount Number of successfully uploaded files
+     * @param array<FileUploadSuccess> $successfulUploads Structured successful upload results
      */
     public function __construct(
-        public readonly array $successfulFiles,
+        array $successfulFiles,
         public readonly array $errors,
         public readonly int $totalFiles,
-        public readonly int $successfulCount
-    ) {}
+        public readonly int $successfulCount,
+        public readonly array $successfulUploads = [],
+    ) {
+        $this->successfulFiles = $successfulUploads === []
+            ? $successfulFiles
+            : array_map(
+                static fn(FileUploadSuccess $upload): string => $upload->storedPath,
+                $successfulUploads
+            );
+    }
 
 
     /**

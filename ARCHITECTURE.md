@@ -15,6 +15,9 @@ The FileUploadService library provides a secure, type-safe way to handle file up
 5. **`FileSaverInterface`** - Interface for different storage implementations
 6. **`FilesystemSaver`** - Local filesystem storage implementation
 7. **`CloudStorageSaver`** - Example cloud storage implementation
+8. **`FileUploadResult`** - Aggregate outcome of a save operation
+9. **`FileUploadSuccess`** - Structured metadata for one successful upload
+10. **`FileUploadError`** - Per-file error details
 
 ### Data Transfer Objects (DTOs)
 
@@ -116,6 +119,7 @@ if ($this->isFileUploadArray($input)) {
 - Uses `Maestroerror\HeicToJpg` library to convert HEIC to JPG
 - Returns both converted file path and updated filename with `.jpg` extension
 - Original HEIC temp file is cleaned up after successful conversion
+- Successful results expose JPEG output metadata on `FileUploadSuccess` (`storedFilename`, `extension`, `mimeType`, `sizeBytes`) with `wasConverted = true`. `originalFilename` still records the incoming `$_FILES['name']` when present. `wasConverted` is not set merely because conversion was enabled.
 
 ### 6. File Saving Process
 **Method:** `FileSaverInterface::saveFile()`
@@ -131,15 +135,19 @@ if ($this->isFileUploadArray($input)) {
 **Method:** `FileUploadService::handleSaveResult()`
 
 **What happens:**
-- If successful: Adds file path to `$savedFilePaths` array
+- If successful: Assembles a `FileUploadSuccess` from processing metadata plus the opaque saver identifier, and appends `storedPath` to `$savedFilePaths` / `$savedFiles`
+- Processed-file metadata (`storedFilename`, `extension`, `mimeType`, `sizeBytes`, `wasConverted`) is captured from the processed source **before** `saveFile()`. It is never recovered by parsing `storedPath`.
+- `originalFilename` is the raw unsanitized `$_FILES['name']` (untrusted provenance) or `null` for data URIs
+- `requestedFilename` is the caller `filenames[]` value from before collision resolution
 - If failed: Adds error to `$errors` array
-- If rollback enabled: Calls `FileUploadService::performRollback()` to delete successfully saved files
+- If rollback enabled: Calls `FileUploadService::performRollback()` to delete successfully saved files and clear both path arrays and `$successfulUploads`
 
 ### 8. Final Result
 **Method:** `FileUploadService::saveFromInput()` (return)
 
 **Returns:** `FileUploadResult` object containing:
-- `successfulFiles` - Array of successfully saved file paths
+- `successfulFiles` - Array of successfully saved path/identifier strings (derived from `FileUploadSuccess::$storedPath` when structured successes are present)
+- `successfulUploads` - Array of `FileUploadSuccess` objects
 - `errors` - Array of `FileUploadError` objects for failed uploads
 - `totalFiles` - Total number of files processed
 - `successfulCount` - Number of successfully processed files
@@ -155,6 +163,7 @@ if ($this->isFileUploadArray($input)) {
 - `FilenameSanitizer::cleanFilename()` removes dangerous characters
 - Null byte removal prevents security bypasses
 - Unicode normalization prevents confusion attacks
+- `FileUploadSuccess::$originalFilename` is **not** sanitized: it is untrusted provenance (raw `$_FILES['name']`) and must never be used as a path, stored filename, or `Content-Disposition` value. Use `storedFilename` for the processed artifact.
 
 ### MIME Type Validation
 - `FileServiceValidator::isFileTypeAllowed()` validates actual file content

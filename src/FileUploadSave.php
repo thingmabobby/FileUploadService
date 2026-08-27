@@ -59,7 +59,16 @@ class FileUploadSave
      * @param string $uploadDestination The upload destination (directory, bucket/key prefix, etc.)
      * @param bool $overwriteExisting Whether to overwrite existing files
      * @param array<FileTypeEnum|string> $allowedFileTypes Array of allowed file types
-     * @return array{success: bool, filePath?: string, error?: FileUploadError}
+     * @return array{
+     *     success: bool,
+     *     filePath?: string,
+     *     storedFilename?: string,
+     *     extension?: string,
+     *     mimeType?: string|null,
+     *     sizeBytes?: int|null,
+     *     wasConverted?: bool,
+     *     error?: FileUploadError
+     * }
      */
     public function processFileUpload(
         FileUploadDTO $fileDTO,
@@ -108,6 +117,11 @@ class FileUploadSave
             $finalFilename = $conversion['filename'];
         }
 
+        $wasConverted = $processedFilePath !== $fileDTO->tmpPath;
+        $extension = strtolower(pathinfo($finalFilename, PATHINFO_EXTENSION));
+        $mimeType = $this->detectProcessedMimeType($processedFilePath, $wasConverted);
+        $sizeBytes = $this->measureProcessedFileSize($processedFilePath);
+
         // Move processed file using the file saver
         // Let each implementation handle path resolution appropriately
         $targetPath = $this->fileSaver->resolveTargetPath($uploadDestination, $finalFilename);
@@ -123,7 +137,12 @@ class FileUploadSave
 
             return [
                 'success' => true,
-                'filePath' => $savedPath
+                'filePath' => $savedPath,
+                'storedFilename' => $finalFilename,
+                'extension' => $extension,
+                'mimeType' => $mimeType,
+                'sizeBytes' => $sizeBytes,
+                'wasConverted' => $wasConverted,
             ];
         } catch (RuntimeException $e) {
             return [
@@ -141,7 +160,16 @@ class FileUploadSave
      * @param string $uploadDestination The upload destination (directory, bucket/key prefix, etc.)
      * @param bool $overwriteExisting Whether to overwrite existing files
      * @param array<FileTypeEnum|string> $allowedFileTypes Array of allowed file types
-     * @return array{success: bool, filePath?: string, error?: FileUploadError}
+     * @return array{
+     *     success: bool,
+     *     filePath?: string,
+     *     storedFilename?: string,
+     *     extension?: string,
+     *     mimeType?: string|null,
+     *     sizeBytes?: int|null,
+     *     wasConverted?: bool,
+     *     error?: FileUploadError
+     * }
      */
     public function processBase64Input(
         DataUriDTO $dataUriDTO,
@@ -365,6 +393,42 @@ class FileUploadSave
         }
 
         return $data;
+    }
+
+
+    /**
+     * Detect MIME type of the processed source file immediately before save.
+     * Never inferred from storedPath or untrusted $_FILES['type'].
+     */
+    private function detectProcessedMimeType(string $filePath, bool $wasConverted): ?string
+    {
+        if (function_exists('finfo_open')) {
+            $finfo = finfo_open(FILEINFO_MIME_TYPE);
+            if ($finfo !== false) {
+                $detected = finfo_file($finfo, $filePath);
+                finfo_close($finfo);
+                if (is_string($detected) && $detected !== '') {
+                    return $detected;
+                }
+            }
+        }
+
+        if ($wasConverted) {
+            return 'image/jpeg';
+        }
+
+        return null;
+    }
+
+
+    /**
+     * Measure byte length of the processed source file immediately before save.
+     */
+    private function measureProcessedFileSize(string $filePath): ?int
+    {
+        $size = @filesize($filePath);
+
+        return $size === false ? null : $size;
     }
 
 

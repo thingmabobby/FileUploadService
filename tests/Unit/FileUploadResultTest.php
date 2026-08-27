@@ -6,6 +6,7 @@ namespace FileUploadService\Tests\Unit;
 
 use FileUploadService\FileUploadError;
 use FileUploadService\FileUploadResult;
+use FileUploadService\FileUploadSuccess;
 use PHPUnit\Framework\TestCase;
 
 class FileUploadResultTest extends TestCase
@@ -26,6 +27,7 @@ class FileUploadResultTest extends TestCase
         $this->assertSame($errors, $result->errors);
         $this->assertSame($totalFiles, $result->totalFiles);
         $this->assertSame($successfulCount, $result->successfulCount);
+        $this->assertSame([], $result->successfulUploads);
     }
 
 
@@ -165,5 +167,57 @@ class FileUploadResultTest extends TestCase
         $error = $result->getErrorForFile('file1.jpg');
 
         $this->assertNull($error);
+    }
+
+
+    public function testConstructorWithSuccessfulUploadsDerivesSuccessfulFiles(): void
+    {
+        $uploads = [
+            new FileUploadSuccess(
+                originalFilename: 'a.jpg',
+                requestedFilename: 'a.jpg',
+                storedFilename: 'a.jpg',
+                storedPath: '/var/uploads/a.jpg',
+                extension: 'jpg',
+                mimeType: 'image/jpeg',
+                sizeBytes: 10,
+                wasConverted: false,
+                inputIndex: 0,
+            ),
+            new FileUploadSuccess(
+                originalFilename: null,
+                requestedFilename: 'b.pdf',
+                storedFilename: 'b.pdf',
+                storedPath: 'memory://obj-9f3c',
+                extension: 'pdf',
+                mimeType: 'application/pdf',
+                sizeBytes: 20,
+                wasConverted: false,
+                inputIndex: 1,
+            ),
+        ];
+
+        $result = new FileUploadResult(
+            successfulFiles: ['should-be-ignored'],
+            errors: [],
+            totalFiles: 2,
+            successfulCount: 2,
+            successfulUploads: $uploads
+        );
+
+        $this->assertSame($uploads, $result->successfulUploads);
+        $this->assertSame(['/var/uploads/a.jpg', 'memory://obj-9f3c'], $result->successfulFiles);
+        $this->assertSame('a.jpg', $result->successfulUploads[0]->storedFilename);
+        $this->assertNotSame(basename($result->successfulUploads[1]->storedPath), $result->successfulUploads[1]->storedFilename);
+    }
+
+
+    public function testFourArgumentConstructorRemainsBackwardCompatible(): void
+    {
+        $result = new FileUploadResult(['file1.jpg', 'file2.pdf'], [], 2, 2);
+
+        $this->assertSame(['file1.jpg', 'file2.pdf'], $result->successfulFiles);
+        $this->assertSame([], $result->successfulUploads);
+        $this->assertTrue($result->isCompleteSuccess());
     }
 }

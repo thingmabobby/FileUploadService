@@ -233,6 +233,7 @@ class FileUploadIntegrationTest extends TestCase
         // Since we have one valid and one invalid file, the valid file should be rolled back
         $this->assertSame(0, $result->successfulCount, 'Rollback should remove all successfully uploaded files when errors occur');
         $this->assertCount(0, $result->successfulFiles, 'No files should remain after rollback');
+        $this->assertCount(0, $result->successfulUploads, 'Rolled-back files must not appear as structured successes');
     }
 
 
