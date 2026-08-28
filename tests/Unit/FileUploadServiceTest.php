@@ -414,6 +414,48 @@ class FileUploadServiceTest extends TestCase
     }
 
 
+    public function testSaveWithUnwrappedSingleFileUploadArray(): void
+    {
+        $imageDataUri = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAv/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k=';
+        $jpegBytes = base64_decode(explode(',', $imageDataUri, 2)[1], true);
+        $this->assertNotFalse($jpegBytes);
+
+        $tempFile = tempnam(sys_get_temp_dir(), 'upload_test');
+        file_put_contents($tempFile, $jpegBytes);
+
+        $filesArray = [
+            'name' => 'photo.png',
+            'type' => 'image/png',
+            'tmp_name' => $tempFile,
+            'error' => UPLOAD_ERR_OK,
+            'size' => strlen($jpegBytes)
+        ];
+
+        try {
+            $result = $this->service->save(
+                $filesArray,
+                $this->testDir,
+                ['photo.jpg']
+            );
+
+            $this->assertTrue($result->hasSuccessfulUploads(), implode('; ', $result->getErrorMessages()));
+            $this->assertFalse($result->hasErrors());
+            $this->assertSame(1, $result->successfulCount);
+            $this->assertSame(1, $result->totalFiles);
+            $this->assertCount(1, $result->successfulFiles);
+            $this->assertCount(1, $result->successfulUploads);
+            $this->assertSame('photo.png', $result->successfulUploads[0]->originalFilename);
+            $this->assertSame('photo.jpg', $result->successfulUploads[0]->storedFilename);
+            $this->assertStringEndsWith('photo.jpg', $result->successfulFiles[0]);
+            $this->assertTrue(file_exists($result->successfulFiles[0]));
+        } finally {
+            if (file_exists($tempFile)) {
+                unlink($tempFile);
+            }
+        }
+    }
+
+
     public function testSaveWithMultipleFiles(): void
     {
         $imageDataUri = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAv/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k=';

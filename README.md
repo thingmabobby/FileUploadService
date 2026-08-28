@@ -275,7 +275,7 @@ if ($service->isHeicConversionEnabled()) {
 
 **HEIC Conversion Behavior:**
 - **Default behavior**: HEIC/HEIF files are automatically detected via MIME type and converted to JPEG format
-- **Detection method**: Uses MIME type from uploaded file (primary), finfo() detection (fallback), and binary header checks (last resort)
+- **Detection method**: Uses MIME type from uploaded file (primary), `finfo` detection (fallback), and binary header checks (last resort)
 - **Extension-agnostic**: Files are detected by content, not file extension, preventing misidentification
 - **Conversion fails**: Falls back to saving the original HEIC/HEIF file
 - **Always graceful**: Never fails uploads due to conversion issues
@@ -536,7 +536,7 @@ The service organizes file types into the following categories (accessible via `
 
 ### MIME Type Validation
 - `FileServiceValidator::isFileTypeAllowed()` validates actual file content
-- Uses `finfo_open()` to detect real MIME types
+- Uses `finfo` to detect real MIME types
 - Prevents file type spoofing attacks
 - Custom MIME types are validated against actual file content
 

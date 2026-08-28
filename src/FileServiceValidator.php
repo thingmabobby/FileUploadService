@@ -897,14 +897,9 @@ class FileServiceValidator
         if (!function_exists('finfo_open')) {
             return null;
         }
-        
-        $finfo = finfo_open(FILEINFO_MIME_TYPE);
-        if ($finfo === false) {
-            return null;
-        }
 
-        $mimeType = finfo_file($finfo, $filePath);
-        finfo_close($finfo);
+        $finfo = new \finfo(FILEINFO_MIME_TYPE);
+        $mimeType = $finfo->file($filePath);
 
         return $mimeType !== false ? $mimeType : null;
     }

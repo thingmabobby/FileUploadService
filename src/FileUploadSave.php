@@ -311,13 +311,10 @@ class FileUploadSave
 
         // 2) Fallback to finfo()
         if (function_exists('finfo_open')) {
-            $f = finfo_open(\FILEINFO_MIME_TYPE);
-            if ($f) {
-                $detected = finfo_file($f, $filePath) ?: '';
-                finfo_close($f);
-                if ($detected === 'image/heic' || $detected === 'image/heif') {
-                    return true;
-                }
+            $finfo = new \finfo(\FILEINFO_MIME_TYPE);
+            $detected = $finfo->file($filePath) ?: '';
+            if ($detected === 'image/heic' || $detected === 'image/heif') {
+                return true;
             }
         }
 
@@ -403,13 +400,10 @@ class FileUploadSave
     private function detectProcessedMimeType(string $filePath, bool $wasConverted): ?string
     {
         if (function_exists('finfo_open')) {
-            $finfo = finfo_open(FILEINFO_MIME_TYPE);
-            if ($finfo !== false) {
-                $detected = finfo_file($finfo, $filePath);
-                finfo_close($finfo);
-                if (is_string($detected) && $detected !== '') {
-                    return $detected;
-                }
+            $finfo = new \finfo(FILEINFO_MIME_TYPE);
+            $detected = $finfo->file($filePath);
+            if (is_string($detected) && $detected !== '') {
+                return $detected;
             }
         }
 

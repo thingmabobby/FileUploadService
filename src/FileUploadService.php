@@ -490,9 +490,9 @@ class FileUploadService
             $this->fileUploadSave = new FileUploadSave($this->validator, $fileSaver, $this->convertHeicToJpg);
         }
         
-        // Smart detection: If $input itself is a multi-file upload array (e.g., $_FILES['pictures']),
+        // Smart detection: If $input itself is a $_FILES row (single-file or multi-file),
         // wrap it so it's treated as a single input rather than iterating over its keys
-        if ($this->isMultiFileUploadArray($input)) {
+        if ($this->isMultiFileUploadArray($input) || $this->isSingleFileUploadArray($input)) {
             $input = [$input];
         }
         

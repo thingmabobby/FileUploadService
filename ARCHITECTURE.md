@@ -113,7 +113,7 @@ if ($this->isFileUploadArray($input)) {
 **What happens:**
 - Detects HEIC/HEIF content using `isHeicContent()` with three-tier detection:
   1. **Primary**: Checks MIME type from DTO (from browser/client)
-  2. **Fallback**: Uses finfo() to detect MIME type from file content
+  2. **Fallback**: Uses `finfo` to detect MIME type from file content
   3. **Last resort**: Reads binary header for HEIC brand markers (ftypheic, ftypheif, ftypmif1)
 - If conversion is enabled and HEIC content is detected, calls `FileUploadSave::convertHeicToJpg()`
 - Uses `Maestroerror\HeicToJpg` library to convert HEIC to JPG
@@ -167,7 +167,7 @@ if ($this->isFileUploadArray($input)) {
 
 ### MIME Type Validation
 - `FileServiceValidator::isFileTypeAllowed()` validates actual file content
-- Uses `finfo_open()` to detect real MIME types
+- Uses `finfo` to detect real MIME types
 - Prevents file type spoofing attacks
 
 ### Atomic File Operations

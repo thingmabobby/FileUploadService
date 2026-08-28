@@ -169,18 +169,17 @@ class CustomExtensionsTest extends TestCase
             file_put_contents($customPath, $testCase['content']);
 
             try {
-                $finfo = finfo_open(FILEINFO_MIME_TYPE);
-                if ($finfo !== false) {
-                    $detectedMime = finfo_file($finfo, $customPath);
-                    $this->assertEquals(
-                        $testCase['expected_mime'],
-                        $detectedMime,
-                        "Content '{$testCase['content']}' should be detected as '{$testCase['expected_mime']}'"
-                    );
-                    finfo_close($finfo);
-                } else {
-                    $this->fail('Failed to open finfo');
+                if (!function_exists('finfo_open')) {
+                    $this->markTestSkipped('fileinfo extension is not available');
                 }
+
+                $finfo = new \finfo(FILEINFO_MIME_TYPE);
+                $detectedMime = $finfo->file($customPath);
+                $this->assertEquals(
+                    $testCase['expected_mime'],
+                    $detectedMime,
+                    "Content '{$testCase['content']}' should be detected as '{$testCase['expected_mime']}'"
+                );
             } finally {
                 unlink($customPath);
             }
